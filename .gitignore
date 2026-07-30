@@ -15,6 +15,16 @@ venv/
 ENV/
 env/
 
+# Collected data
+data/
+raw_cache/
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+
+# Keep test fixtures
+!tests/fixtures/
+
 # Distribution / Packaging
 build/
 develop-eggs/
@@ -24,3 +34,6 @@ eggs/
 .eggs/
 *.egg-info/
 *.egg
+
+# Other
+.DS_Store

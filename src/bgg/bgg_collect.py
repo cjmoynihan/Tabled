@@ -49,8 +49,15 @@ import requests
 # --------------------------------------------------------------------------
 
 API_ROOT = "https://boardgamegeek.com/xmlapi2"  # no www. — it breaks auth
-DB_PATH = Path(os.environ.get("BGG_DB", "bgg.sqlite"))
-CACHE_DIR = Path(os.environ.get("BGG_CACHE", "raw_cache"))
+def _project_root() -> Path:
+    for parent in [Path.cwd(), *Path.cwd().parents]:
+        if (parent / "pyproject.toml").exists():
+            return parent
+    return Path.cwd()
+
+_ROOT = _project_root()
+DB_PATH = Path(os.environ.get("BGG_DB") or _ROOT / "data" / "bgg.sqlite")
+CACHE_DIR = Path(os.environ.get("BGG_CACHE") or _ROOT / "raw_cache")
 
 MIN_INTERVAL = float(os.environ.get("BGG_MIN_INTERVAL", "5.0"))  # seconds
 PAGE_SIZE = 100          # API maximum
@@ -244,6 +251,7 @@ CREATE TABLE IF NOT EXISTS game_pages (
 
 
 def connect(path: Path = DB_PATH) -> sqlite3.Connection:
+    path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(path, timeout=60)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")

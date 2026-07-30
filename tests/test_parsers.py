@@ -1,7 +1,7 @@
 """Offline tests: XML parsing + DB round trip, no network."""
 import sqlite3, sys
 from xml.etree import ElementTree as ET
-from src import bgg_collect as B
+from bgg import bgg_collect as B
 
 THING = """<items>
   <item type="boardgame" id="13">

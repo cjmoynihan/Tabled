@@ -1,7 +1,7 @@
 """Test the by-game scheduler and resumability against a mock API."""
 import math, sqlite3, sys
 from xml.etree import ElementTree as ET
-import bgg_collect as B
+from bgg import bgg_collect as B
 
 TOTALS = {101: 250, 102: 100, 103: 1000, 104: 40}  # ratings per game
 
