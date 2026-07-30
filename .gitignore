@@ -1,0 +1,26 @@
+### PyCharm / JetBrains IDEs ###
+.idea/
+*.iml
+
+### Python / Virtual Environments ###
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Environments
+.env
+.venv
+venv/
+ENV/
+env/
+
+# Distribution / Packaging
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+*.egg-info/
+*.egg
