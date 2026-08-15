@@ -101,6 +101,64 @@ def raw_dir(tmp_path):
 
 
 @pytest.fixture
+def clustered():
+    """
+    A synthetic Dataset with planted taste clusters and a popular core.
+
+    Built in memory rather than through the CSV pipeline: these tests are
+    about the harness, not about parsing. The structure is deliberate —
+    a block of universally-rated games so the popularity baseline has real
+    signal to work with, and disjoint per-cluster blocks so a model that uses
+    the swipes has something popularity cannot see.
+    """
+    import pandas as pd
+    import scipy.sparse as sp
+
+    from tabled.data.prepare import Dataset
+
+    rng = np.random.default_rng(7)
+    n_clusters, per_cluster, block = 4, 150, 40
+    core = 20                                   # games everybody rates
+    n_games = core + n_clusters * block
+    n_users = n_clusters * per_cluster
+
+    rows, cols, vals = [], [], []
+    for u in range(n_users):
+        c = u // per_cluster
+        # Everyone rates the core, with middling enthusiasm.
+        for g in rng.choice(core, size=12, replace=False):
+            rows.append(u); cols.append(int(g))
+            vals.append(float(rng.integers(5, 9)))
+        # Their own cluster's block, enthusiastically.
+        start = core + c * block
+        for g in rng.choice(block, size=18, replace=False):
+            rows.append(u); cols.append(start + int(g))
+            vals.append(float(rng.integers(8, 11)))
+
+    matrix = sp.coo_matrix(
+        (np.array(vals, dtype=np.float32),
+         (np.array(rows), np.array(cols))),
+        shape=(n_users, n_games), dtype=np.float32).tocsr()
+    matrix.sort_indices()
+
+    popularity = np.bincount(matrix.indices, minlength=n_games)
+    games = pd.DataFrame({
+        "BGGId": np.arange(1, n_games + 1),
+        "Name": [f"Game {i}" for i in range(n_games)],
+        "BayesAvgRating": rng.random(n_games) * 3 + 5.5,
+        "AvgRating": rng.random(n_games) * 3 + 5.5,
+        "NumUserRatings": popularity,
+        "game_index": np.arange(n_games),
+    })
+
+    return Dataset(
+        matrix=matrix, games=games,
+        usernames=np.array([f"u{i}" for i in range(n_users)], dtype=object),
+        manifest={"thresholds": {"min_game_ratings": 1, "min_user_ratings": 1}},
+    )
+
+
+@pytest.fixture
 def dataset(raw_dir):
     """A built Dataset over the fixture, with deliberately low thresholds."""
     from tabled.data import prepare

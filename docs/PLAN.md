@@ -1,6 +1,6 @@
 # Tabled — project plan
 
-A board game recommender over the BoardGameGeek dump, with a swipe interface:
+A board game recommender jumpstarted with initial Kaggle data, with a swipe interface:
 the user reacts to games one at a time, and each reaction sharpens the next
 suggestion.
 
@@ -116,10 +116,9 @@ and Catan ↔ Gloomhaven −0.26 — the ordering a board gamer would predict.
   for a good one, and a truncated matrix is not obviously broken — it is just
   missing its tail. This turns that failure into "no artifact".
 
-## Phase 2 — Evaluation harness (do this before any model)
+## Phase 2 — Evaluation harness ✅
 
-Build the scoreboard first, or there is no way to answer the item-item vs
-matrix-factorisation question.
+`tabled evaluate` → the scoreboard any model must beat.
 
 - **Split by user, not by interaction.** The app serves brand-new users, so
   hold out entire users. Splitting random cells measures a different task than
@@ -139,6 +138,51 @@ matrix-factorisation question.
   Track distinct games recommended across all test users, and the median
   popularity rank of what gets served.
 
+### Baseline results
+
+3,000 held-out users, top-20 lists, users needing ≥25 ratings to be eligible.
+
+**Random swipe seeding** (unbiased, the standard way to quote this):
+
+| model | k=3 | k=5 | k=10 | k=20 | coverage | pop %ile |
+|---|---|---|---|---|---|---|
+| popularity | **0.239** | **0.236** | **0.229** | **0.208** | 0.1% | 0.1 |
+| bayes | 0.156 | 0.154 | 0.148 | 0.136 | 0.1% | 0.4 |
+| random | 0.003 | 0.003 | 0.003 | 0.002 | 97% | 50 |
+
+**Popular-first seeding** (what the app will actually do):
+
+| model | k=3 | k=5 | k=10 | k=20 | coverage | pop %ile |
+|---|---|---|---|---|---|---|
+| popularity | **0.174** | 0.132 | 0.068 | 0.026 | 0.1% | 0.1 |
+| bayes | 0.151 | **0.141** | **0.113** | **0.074** | 0.1% | 0.5 |
+| random | 0.002 | 0.003 | 0.002 | 0.003 | 97% | 50 |
+
+Figures are nDCG@20.
+
+**The finding that matters: the seeding policy decides how hard the baseline
+is.** Under random seeding, popularity looks close to unbeatable — nDCG 0.24
+and a 91% hit rate from ignoring the user completely. Under popular-first
+seeding it collapses to 0.026 by k=20, an 8× drop, and Bayesian average
+overtakes it from k=5.
+
+The reason is not subtle once seen: if the app has already shown someone the
+twenty most popular games, those games are no longer available to recommend,
+and what the user still likes is by construction *not* mainstream. The
+popularity baseline runs out of catalogue.
+
+Two consequences for Phase 3. First, quote both policies or the bar is
+meaningless — a model beating popularity at 0.03 has done nothing if the
+honest bar is 0.24. Second, and more useful: **the app's own seeding policy
+destroys the popularity advantage**, so personalisation has far more room
+than the random-seeded table suggests. That is an argument for the design in
+Phase 4, not just an evaluation detail.
+
+Also worth noting: popularity and bayes both recommend from **0.1% of the
+catalogue** — roughly 20 games, to everyone. For a discovery app that is a
+failure mode regardless of nDCG, and it is the number to watch when the real
+models arrive.
+
 ## Phase 3 — The two recommenders
 
 Shared interface: `fit(matrix)` and `recommend(swipes, n) -> game indices`,
@@ -155,6 +199,10 @@ neighbour lists — no fitting, and it explains itself: *because you liked X*.
 truncated SVD on mean-centred explicit ratings as a cross-check. New users are
 handled by folding in: solve for a user vector from their swipes against fixed
 item factors. Sweep factors ∈ {32, 64, 128} and regularisation.
+
+Both must clear the Phase 2 table under *both* seeding policies, and be read
+against coverage — a model that beats popularity on nDCG while recommending
+the same 20 games has not solved the problem this app exists for.
 
 **On the hypothesis that MF wins because the data is sparse.** Likely correct
 for users with real history, and 0.21% density is exactly the regime where

@@ -65,6 +65,45 @@ def cmd_info(args) -> int:
     return 0
 
 
+def cmd_evaluate(args) -> int:
+    import json
+
+    from tabled.data import prepare
+    from tabled.eval import simulate, split
+    from tabled.models import baselines
+
+    ds = prepare.load(args.out)
+    parts = split.by_user(ds, n_test=args.test_users,
+                          min_ratings=args.min_ratings, seed=args.seed)
+    train = ds.subset_users(parts.train_rows)
+
+    wanted = [m.strip() for m in args.models.split(",")]
+    unknown = [m for m in wanted if m not in baselines.ALL]
+    if unknown:
+        print(f"unknown model(s): {', '.join(unknown)}")
+        print(f"available: {', '.join(baselines.ALL)}")
+        return 1
+
+    ks = tuple(int(k) for k in args.ks.split(","))
+    results = []
+    for name in wanted:
+        model = baselines.ALL[name]().fit(train)
+        results += simulate.evaluate(
+            model, ds, parts.test_rows, ks=ks, n=args.n,
+            policy=args.policy, seed=args.seed)
+
+    print(f"\n{len(parts.test_rows):,} held-out users, top-{args.n}, "
+          f"'{args.policy}' swipe seeding\n")
+    print(simulate.format_table(results))
+
+    if args.save:
+        args.save.parent.mkdir(parents=True, exist_ok=True)
+        args.save.write_text(json.dumps([r.as_dict() for r in results],
+                                        indent=2), encoding="utf-8")
+        print(f"wrote {config.display(args.save)}\n")
+    return 0
+
+
 def _print_manifest(manifest: dict) -> None:
     raw, kept = manifest["raw"], manifest["kept"]
     t = manifest["thresholds"]
@@ -115,7 +154,31 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--out", type=Path, default=None)
     s.set_defaults(func=cmd_info)
 
+    s = sub.add_parser("evaluate", help="score models on held-out users")
+    s.add_argument("--out", type=Path, default=None, help="artifact directory")
+    s.add_argument("--models", default="popularity,bayes,random",
+                   help="comma-separated model names")
+    s.add_argument("--ks", default="3,5,10,20",
+                   help="comma-separated swipe counts to sweep")
+    s.add_argument("--n", type=int, default=20, help="length of the top-N list")
+    s.add_argument("--policy", default="random",
+                   choices=simulate_policies(),
+                   help="how the revealed swipes are chosen")
+    s.add_argument("--test-users", type=int, default=5000)
+    s.add_argument("--min-ratings", type=int, default=25,
+                   help="minimum ratings for a user to be eligible for testing")
+    s.add_argument("--seed", type=int, default=0)
+    s.add_argument("--save", type=Path, default=None,
+                   help="also write the results as JSON")
+    s.set_defaults(func=cmd_evaluate)
+
     return p
+
+
+def simulate_policies() -> tuple[str, ...]:
+    from tabled.eval.simulate import SEED_POLICIES
+
+    return SEED_POLICIES
 
 
 def main(argv: Sequence[str] | None = None) -> int:

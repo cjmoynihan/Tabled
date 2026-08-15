@@ -4,8 +4,9 @@ A board game recommender over the [BoardGameGeek ratings dump][kaggle], with a
 swipe interface: you react to games one at a time and each reaction sharpens
 the next suggestion.
 
-Currently the data pipeline is built and verified. See [docs/PLAN.md](docs/PLAN.md)
-for the full roadmap and the reasoning behind each decision.
+The data pipeline and the evaluation harness are built; the recommenders are
+next. See [docs/PLAN.md](docs/PLAN.md) for the full roadmap and the reasoning
+behind each decision.
 
 ## Setup
 
@@ -22,6 +23,7 @@ pip install -e ".[dev]"
 tabled profile     # describe the raw CSVs; writes data/processed/profile.json
 tabled prepare     # build the model-ready artifacts
 tabled info        # show what is currently built
+tabled evaluate    # score models against held-out users
 ```
 
 `profile` is worth running first — it prints a retention table showing how many
@@ -66,6 +68,29 @@ swipe UI collects thumbs up/down, but collapsing the scale during `prepare`
 would freeze a modelling choice into the data; `to_implicit(threshold=)` does
 it at model time instead, where it can be tuned.
 
+## Evaluating
+
+```bash
+tabled evaluate --test-users 3000 --ks 3,5,10,20 --policy random
+tabled evaluate --test-users 3000 --policy popular    # what the app will do
+```
+
+Entire users are held out, never random ratings — the app meets people it has
+never seen, so hiding a slice of a known user's ratings would measure a
+different task. Each test user has `k` ratings revealed as simulated swipes,
+and the model's top-N is scored against the games they liked but were never
+shown.
+
+Quote both seeding policies. Under random seeding the popularity control
+reaches nDCG@20 of 0.24; under popular-first seeding it falls to 0.026 by
+k=20, because once the app has shown someone the most popular games, those
+games can no longer be recommended. Which policy you use decides how hard the
+baseline is, so a model beating "popularity" means nothing until you say
+which.
+
+Read accuracy next to coverage. Both non-random baselines score well while
+drawing from **0.1% of the catalogue** — about 20 games, for everybody.
+
 ## Tests
 
 ```bash
@@ -87,6 +112,16 @@ src/tabled/
     scan.py          chunked support counting, with an on-disk cache
     profile.py       describe the raw CSVs
     prepare.py       build, save and load the model-ready artifacts
+  models/
+    base.py          the Recommender contract and the Swipes type
+    baselines.py     popularity, Bayesian average, random
+  eval/
+    split.py         hold out whole users
+    metrics.py       recall@N, nDCG@N, coverage, popularity bias
+    simulate.py      replay the swipe flow across a sweep of k
 ```
+
+Layering runs `config → data → models → eval → cli`; nothing imports upwards
+or sideways.
 
 [kaggle]: https://www.kaggle.com/datasets/threnjen/board-games-database-from-boardgamegeek
