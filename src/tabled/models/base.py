@@ -68,16 +68,30 @@ class Swipes:
     def disliked(self) -> np.ndarray:
         return self.items[self.ratings < config.LIKE_THRESHOLD]
 
-    def centred(self) -> np.ndarray:
+    def centred(self, prior_mean: float | None = None,
+                prior_weight: float = 0.0) -> np.ndarray:
         """
-        Ratings with this user's own mean removed.
+        Ratings with this user's mean removed, optionally shrunk to a prior.
 
         Same reasoning as centring the training matrix: a user who rates
         everything 8-10 is not telling us they love everything, only that
-        their scale starts high. With one or two swipes the mean is a poor
-        estimate, so models should treat this as a hint, not gospel.
+        their scale starts high.
+
+        The prior matters more than it looks. Centring on the raw mean is
+        degenerate at one swipe — the mean *is* that rating, so it centres to
+        exactly zero and the model receives no signal at all. Shrinking toward
+        the training mean fixes that: with `prior_weight` pseudo-observations,
+        a single 9 still reads as "above average" instead of "no opinion", and
+        the user's own mean takes over as swipes accumulate.
         """
-        return self.ratings - self.ratings.mean() if len(self) else self.ratings
+        if len(self) == 0:
+            return self.ratings
+        if prior_mean is None or prior_weight <= 0:
+            return self.ratings - self.ratings.mean()
+
+        n = len(self)
+        centre = (n * self.ratings.mean() + prior_weight * prior_mean) / (n + prior_weight)
+        return self.ratings - centre
 
 
 class Recommender(ABC):

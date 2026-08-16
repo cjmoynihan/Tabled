@@ -183,7 +183,7 @@ catalogue** — roughly 20 games, to everyone. For a discovery app that is a
 failure mode regardless of nDCG, and it is the number to watch when the real
 models arrive.
 
-## Phase 3 — The two recommenders
+## Phase 3 — The two recommenders ✅
 
 Shared interface: `fit(matrix)` and `recommend(swipes, n) -> game indices`,
 so the app and the harness are model-agnostic.
@@ -204,19 +204,107 @@ Both must clear the Phase 2 table under *both* seeding policies, and be read
 against coverage — a model that beats popularity on nDCG while recommending
 the same 20 games has not solved the problem this app exists for.
 
-**On the hypothesis that MF wins because the data is sparse.** Likely correct
-for users with real history, and 0.21% density is exactly the regime where
-factorisation earns its keep — it generalises across games that share no
-raters, which item-item structurally cannot. But the swipe app mostly operates
-at `k = 3` to `15`, and a fold-in from 5 observations is a noisy estimate of a
-64-dimensional vector, while item-item's neighbour sum degrades gently. So
-expect item-item to be competitive or better at low `k` and MF to pull ahead
-as `k` grows, with a crossover somewhere in between. Two consequences: the
-`k` sweep in Phase 2 is the experiment, not a detail; and the answer may be
-"item-item for the first few swipes, MF after", which is a shipping strategy
-rather than a tie-break. A blend is the third arm worth running.
+### Results
 
-## Phase 4 — Swipe policy
+nDCG@20, 5,000 held-out users, the same split for every arm. **Bold** is the
+best model in each column.
+
+**Random swipe seeding:**
+
+| model | k=3 | k=5 | k=10 | k=20 | coverage |
+|---|---|---|---|---|---|
+| popularity | **0.238** | **0.235** | 0.227 | 0.210 | 0.1% |
+| item-item | 0.183 | 0.208 | 0.237 | 0.246 | 15–34% |
+| als | 0.167 | 0.200 | **0.240** | **0.247** | 10–14% |
+| bayes | 0.157 | 0.155 | 0.148 | 0.137 | 0.1% |
+
+**Popular-first seeding — what the app will actually do:**
+
+| model | k=3 | k=5 | k=10 | k=20 | coverage |
+|---|---|---|---|---|---|
+| item-item | 0.171 | **0.185** | **0.170** | **0.126** | 6–8% |
+| als | 0.163 | 0.171 | 0.144 | 0.093 | 4–7% |
+| popularity | **0.175** | 0.134 | 0.070 | 0.027 | 0.1% |
+| bayes | 0.152 | 0.142 | 0.114 | 0.075 | 0.1% |
+
+**The crossover is real, and lands where predicted.** Under random seeding
+item-item leads at k=3 and k=5, ALS overtakes it at k=10, and both beat
+popularity from k=10 onward. The mechanism was the one expected: fold-in from
+five observations is a noisy estimate of a 64-dimensional vector, while a
+neighbour sum degrades gently.
+
+**But the margin is small and the app never gets there.** ALS's win at k=10 is
+0.240 vs 0.237 — about 1%, well inside anything worth shipping a second model
+for. Under the seeding the app actually uses, item-item wins at *every* k, and
+the gap widens rather than closing: 35% better by k=20.
+
+The reason is the same effect that broke the popularity baseline in Phase 2.
+Once the recognisable games have been shown, what remains to be found is
+niche, and that is precisely where 64 latent factors are lossiest — the tail
+is what gets compressed away. Item-item keeps a specific neighbour list for
+every game, however obscure. Its coverage is 2–3× ALS's throughout, which is
+the same fact measured a different way.
+
+**Recommendation: ship item-item.** It wins across the operating range, covers
+far more of the catalogue, needs no per-user solve, and can say *because you
+liked Gloomhaven* — which in a swipe interface is a feature, not a nicety.
+Keep ALS: it is 9 MB and 30 seconds to fit, and it is the natural blend
+partner if the k≥10 regime ever matters.
+
+**On the hypothesis that MF wins because the data is sparse** — the reasoning
+was sound and the mechanism showed up in the measurements, but the effect is
+about 1% where it exists at all, and it does not exist in the regime this app
+operates in. Sparsity favours factorisation for users with history; a swipe
+app's users do not have history, which turns out to matter more than density.
+
+### Verification beyond the metrics
+
+Neighbour lists were read by eye before the numbers were trusted, because a
+plausible nDCG can hide nonsense:
+
+- Gloomhaven → Jaws of the Lion, Pandemic Legacy, Spirit Island, Scythe
+- Codenames → Codenames: Duet, Codenames: Pictures, Decrypto, Just One
+- Terraforming Mars → Great Western Trail, Scythe, Wingspan, Brass
+- Catan → Ticket to Ride, Carcassonne, Citadels
+- Twilight Struggle → Through the Ages, Brass, War of the Ring
+
+Each groups by weight and play style rather than by popularity, which is what
+the shrinkage term is there to buy.
+
+### One trap worth naming
+
+Both models are fitted against a *specific* held-out split. Evaluating a
+cached model against a different split silently tests it on users it trained
+on, and the only symptom is that the scores improve. `tabled evaluate` now
+refuses to run when the artifact's recorded split does not match the one being
+evaluated.
+
+## Phase 4 — Swipe policy and learning from real swipes
+
+Now the highest-value phase, and Phase 3 is the reason why. Every number above
+is a *simulation* of swiping, reconstructed from ratings people gave on BGG
+years ago in a completely different interface. Real swipe logs are the only
+data that measures the actual product, and they capture things the ratings
+dump structurally cannot: what someone skipped, how long they hesitated, which
+card made them stop.
+
+Logging should go in before the UI ships, not after — the seam already exists.
+`Swipes` is the type every model consumes, so a session is just an append-only
+list of `(game_index, reaction, timestamp)` and replaying one reconstructs the
+exact model input. Worth recording from day one:
+
+- **reaction** — like / dislike / skip / already-played, kept distinct.
+  Collapsing "skip" into "dislike" destroys the most interesting signal there
+  is, because a skip is usually *indifference or unfamiliarity*, not distaste.
+- **position in the session**, since the 3rd swipe and the 30th mean different
+  things.
+- **what was shown and not chosen** — the card the user saw is a decision the
+  ratings dump has no equivalent for, and it is what makes the log worth more
+  than another copy of BGG.
+
+That last point is the real prize: implicit feedback on *impressions* rather
+than ratings. It is also why the harness above should eventually be replayed
+against logged sessions instead of simulated ones.
 
 Ranking is not the same as choosing what to show next. The card the user sees
 should balance:

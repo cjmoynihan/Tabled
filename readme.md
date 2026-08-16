@@ -23,6 +23,7 @@ pip install -e ".[dev]"
 tabled profile     # describe the raw CSVs; writes data/processed/profile.json
 tabled prepare     # build the model-ready artifacts
 tabled info        # show what is currently built
+tabled fit         # fit and cache a recommender
 tabled evaluate    # score models against held-out users
 ```
 
@@ -68,6 +69,45 @@ swipe UI collects thumbs up/down, but collapsing the scale during `prepare`
 would freeze a modelling choice into the data; `to_implicit(threshold=)` does
 it at model time instead, where it can be tuned.
 
+## Recommending
+
+Two models, both cached as artifacts because fitting is far too slow to happen
+per request:
+
+```bash
+tabled fit --model item-item --holdout   # ~2 min, writes item_item.npz (14 MB)
+tabled fit --model als --holdout         # ~30 s, writes als.npz (9 MB)
+```
+
+`--holdout` fits on the training split only and records which users were held
+out, so `evaluate` can refuse to score a model against a split it trained on.
+Drop it to fit on everyone for serving.
+
+```python
+from tabled import config
+from tabled.data import prepare
+from tabled.models import store
+from tabled.models.base import Swipes
+
+ds = prepare.load()
+model = store.load_item_item(config.ITEM_ITEM_NPZ, ds.shape[1])
+
+swipes = Swipes.from_reactions(liked=[1234, 5678], disliked=[910])
+for game in model.recommend(swipes, n=10):
+    print(ds.games.loc[game, "Name"])
+```
+
+**Item-item** ranks by similarity to what you reacted to, with similarities
+shrunk by co-rater count so a pair sharing four raters cannot outrank a pair
+sharing four thousand. Only the top 100 neighbours per game are kept — the
+full matrix is 1.2 GB and ~89% dense, so sparsity saves nothing.
+
+**ALS** factorises binarised likes and folds a new user in with a single
+least-squares solve against fixed item factors. Unusually for an
+implicit-feedback model it uses dislikes, entered as high-confidence
+observations of zero preference — in a swipe app a thumbs-down is evidence,
+not absence.
+
 ## Evaluating
 
 ```bash
@@ -90,6 +130,20 @@ which.
 
 Read accuracy next to coverage. Both non-random baselines score well while
 drawing from **0.1% of the catalogue** — about 20 games, for everybody.
+
+### Results
+
+nDCG@20 under popular-first seeding, 5,000 held-out users:
+
+| model | k=3 | k=5 | k=10 | k=20 | coverage |
+|---|---|---|---|---|---|
+| item-item | 0.171 | **0.185** | **0.170** | **0.126** | 6–8% |
+| als | 0.163 | 0.171 | 0.144 | 0.093 | 4–7% |
+| popularity | **0.175** | 0.134 | 0.070 | 0.027 | 0.1% |
+
+Item-item wins across the range the app operates in and covers far more of the
+catalogue. ALS does overtake it at k≥10 — but only under random seeding, and
+only by about 1%. See [docs/PLAN.md](docs/PLAN.md) for the full comparison.
 
 ## Tests
 
@@ -115,6 +169,9 @@ src/tabled/
   models/
     base.py          the Recommender contract and the Swipes type
     baselines.py     popularity, Bayesian average, random
+    item_item.py     shrunk cosine similarity with top-k neighbours
+    mf.py            implicit ALS with user fold-in
+    store.py         save and load fitted models
   eval/
     split.py         hold out whole users
     metrics.py       recall@N, nDCG@N, coverage, popularity bias

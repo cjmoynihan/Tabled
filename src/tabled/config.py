@@ -44,6 +44,11 @@ GAMES_PARQUET = PROCESSED_DIR / "games.parquet"    # one row per kept game
 USERS_NPY = PROCESSED_DIR / "users.npy"            # usernames by user index
 MANIFEST_JSON = PROCESSED_DIR / "manifest.json"    # what was built, and how
 
+# Fitted models. Both are expensive to build and cheap to load, so they are
+# artifacts rather than something the app or the harness recomputes.
+ITEM_ITEM_NPZ = PROCESSED_DIR / "item_item.npz"    # top-k neighbour lists
+ALS_NPZ = PROCESSED_DIR / "als.npz"                # item latent factors
+
 # -- ingest ----------------------------------------------------------------
 # 19M rows will not fit comfortably alongside a similarity matrix, so every
 # pass over user_ratings.csv is chunked. 2M rows of (int32, float32, str)

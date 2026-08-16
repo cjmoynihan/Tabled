@@ -65,6 +65,89 @@ def cmd_info(args) -> int:
     return 0
 
 
+def cmd_fit(args) -> int:
+    """
+    Fit an expensive model once and cache it.
+
+    Deliberately separate from `evaluate`. Item-item takes minutes, and
+    rebuilding it for every sweep of k or every change of policy would make
+    experimenting painful enough that it stops happening.
+    """
+    from tabled.data import prepare
+    from tabled.eval import split
+    from tabled.models import store
+    from tabled.models.item_item import ItemItem
+    from tabled.models.mf import ImplicitALS
+
+    ds = prepare.load(args.out)
+    spec = None
+    if args.holdout:
+        spec = {"test_users": args.test_users,
+                "min_ratings": args.min_ratings, "seed": args.seed}
+        parts = split.by_user(ds, **{"n_test": args.test_users,
+                                     "min_ratings": args.min_ratings,
+                                     "seed": args.seed})
+        ds_fit = ds.subset_users(parts.train_rows)
+        print(f"fitting on {ds_fit.shape[0]:,} training users "
+              f"({args.test_users:,} held out)")
+    else:
+        ds_fit = ds
+        print(f"fitting on all {ds_fit.shape[0]:,} users")
+
+    if args.model == "item-item":
+        model = ItemItem(k=args.k, shrinkage=args.shrinkage).fit(ds_fit)
+        store.save_item_item(model, args.path or config.ITEM_ITEM_NPZ, spec)
+    else:
+        model = ImplicitALS(factors=args.factors, iterations=args.iterations,
+                            regularization=args.regularization,
+                            alpha=args.alpha, seed=args.seed).fit(ds_fit)
+        store.save_als(model, args.path or config.ALS_NPZ, spec)
+    return 0
+
+
+def _check_split(path, args) -> None:
+    """
+    Refuse to score a cached model against a split it did not hold out.
+
+    Silent leakage is the failure this guards. A model fitted with 5,000 users
+    held out, then evaluated against a differently-seeded 5,000, is being
+    tested largely on users it trained on — and the only symptom is that the
+    numbers look good.
+    """
+    from tabled.models import store
+
+    spec = store.split_spec(path)
+    if spec is None:
+        print(f"warning: {path.name} records no holdout — it was fitted on "
+              f"every user, so these scores are optimistic and not "
+              f"comparable to the baselines")
+        return
+
+    current = {"test_users": args.test_users,
+               "min_ratings": args.min_ratings, "seed": args.seed}
+    if spec != current:
+        raise SystemExit(
+            f"{path.name} held out {spec}, but this run is evaluating against "
+            f"{current}. Those test users overlap its training data — refit "
+            f"with matching --test-users/--min-ratings/--seed, or evaluate "
+            f"with the values it was fitted for.")
+
+
+def _load_model(name: str, train, args):
+    """Baselines are cheap to fit here; the real models come off disk."""
+    from tabled.models import baselines, store
+
+    if name in baselines.ALL:
+        return baselines.ALL[name]().fit(train)
+    if name == "item-item":
+        _check_split(config.ITEM_ITEM_NPZ, args)
+        return store.load_item_item(config.ITEM_ITEM_NPZ, train.shape[1])
+    if name == "als":
+        _check_split(config.ALS_NPZ, args)
+        return store.load_als(config.ALS_NPZ, train.shape[1])
+    raise KeyError(name)
+
+
 def cmd_evaluate(args) -> int:
     import json
 
@@ -77,17 +160,23 @@ def cmd_evaluate(args) -> int:
                           min_ratings=args.min_ratings, seed=args.seed)
     train = ds.subset_users(parts.train_rows)
 
+    known = set(baselines.ALL) | {"item-item", "als"}
     wanted = [m.strip() for m in args.models.split(",")]
-    unknown = [m for m in wanted if m not in baselines.ALL]
+    unknown = [m for m in wanted if m not in known]
     if unknown:
         print(f"unknown model(s): {', '.join(unknown)}")
-        print(f"available: {', '.join(baselines.ALL)}")
+        print(f"available: {', '.join(sorted(known))}")
         return 1
 
     ks = tuple(int(k) for k in args.ks.split(","))
     results = []
     for name in wanted:
-        model = baselines.ALL[name]().fit(train)
+        try:
+            model = _load_model(name, train, args)
+        except FileNotFoundError:
+            print(f"{name} has not been fitted yet — run `tabled fit "
+                  f"--model {name} --holdout` first")
+            return 1
         results += simulate.evaluate(
             model, ds, parts.test_rows, ks=ks, n=args.n,
             policy=args.policy, seed=args.seed)
@@ -153,6 +242,23 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("info", help="show what is currently built")
     s.add_argument("--out", type=Path, default=None)
     s.set_defaults(func=cmd_info)
+
+    s = sub.add_parser("fit", help="fit an expensive model and cache it")
+    s.add_argument("--model", required=True, choices=("item-item", "als"))
+    s.add_argument("--out", type=Path, default=None, help="artifact directory")
+    s.add_argument("--path", type=Path, default=None, help="where to write it")
+    s.add_argument("--holdout", action="store_true",
+                   help="fit on the training split only, for honest evaluation")
+    s.add_argument("--test-users", type=int, default=5000)
+    s.add_argument("--min-ratings", type=int, default=25)
+    s.add_argument("--seed", type=int, default=0)
+    s.add_argument("--k", type=int, default=100, help="neighbours per game")
+    s.add_argument("--shrinkage", type=float, default=50.0)
+    s.add_argument("--factors", type=int, default=64)
+    s.add_argument("--iterations", type=int, default=15)
+    s.add_argument("--regularization", type=float, default=0.05)
+    s.add_argument("--alpha", type=float, default=40.0)
+    s.set_defaults(func=cmd_fit)
 
     s = sub.add_parser("evaluate", help="score models on held-out users")
     s.add_argument("--out", type=Path, default=None, help="artifact directory")
