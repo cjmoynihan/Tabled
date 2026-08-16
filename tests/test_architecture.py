@@ -27,7 +27,12 @@ import tabled
 
 PACKAGE = Path(tabled.__file__).parent
 
-LAYERS = {"config": 0, "data": 1, "models": 2, "eval": 3, "cli": 4}
+# `eval` and `serve` sit at the same level deliberately: they are siblings,
+# so neither may import the other. Scoring a model and serving a card are
+# separate concerns, and coupling them would make the harness depend on UI
+# decisions like the popularity gate.
+LAYERS = {"config": 0, "data": 1, "models": 2, "eval": 3, "serve": 3,
+          "cli": 4}
 
 
 def layer_of(path: Path) -> tuple[str, int] | None:

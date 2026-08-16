@@ -138,3 +138,28 @@ class ItemItem(Recommender):
         valid = flat >= 0
         return np.bincount(flat[valid], weights=contribution[valid],
                            minlength=self.n_games)
+
+    def because_of(self, swipes: Swipes, game: int) -> tuple[int, float] | None:
+        """
+        Which swiped game contributed most to `game`'s score.
+
+        Free here, and not available from a factorisation at all: the score
+        *is* a sum of per-neighbour terms, so the largest one is the reason.
+        A swipe interface benefits from saying so out loud — it turns a
+        recommendation into a claim the user can agree or disagree with,
+        and it makes a bad neighbour list visible instead of merely felt.
+        """
+        if len(swipes) == 0:
+            return None
+
+        weights = swipes.centred(self._global_mean, self.prior_weight)
+        best, best_value = None, 0.0
+        for position, item in enumerate(swipes.items):
+            hit = np.flatnonzero(self._idx[item] == game)
+            if not len(hit):
+                continue
+            value = weights[position] * self._sim[item, hit[0]]
+            if value > best_value:
+                best, best_value = int(item), float(value)
+
+        return (best, best_value) if best is not None else None

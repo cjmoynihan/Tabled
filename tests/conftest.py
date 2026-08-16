@@ -148,6 +148,13 @@ def clustered():
         "BayesAvgRating": rng.random(n_games) * 3 + 5.5,
         "AvgRating": rng.random(n_games) * 3 + 5.5,
         "NumUserRatings": popularity,
+        # Spread across the full 1-5 weight range and a realistic spread of
+        # disagreement, so the cold-start policy has something to balance.
+        "GameWeight": rng.uniform(1.0, 5.0, n_games),
+        "StdDev": rng.uniform(0.8, 2.2, n_games),
+        "MinPlayers": 2, "MaxPlayers": 4,
+        "YearPublished": rng.integers(1990, 2022, n_games),
+        "ComMinPlaytime": 30, "ComMaxPlaytime": 90,
         "game_index": np.arange(n_games),
     })
 

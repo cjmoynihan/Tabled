@@ -4,9 +4,16 @@ A board game recommender over the [BoardGameGeek ratings dump][kaggle], with a
 swipe interface: you react to games one at a time and each reaction sharpens
 the next suggestion.
 
-The data pipeline and the evaluation harness are built; the recommenders are
-next. See [docs/PLAN.md](docs/PLAN.md) for the full roadmap and the reasoning
+The pipeline, the evaluation harness, both recommenders and the swipe app are
+built. See [docs/PLAN.md](docs/PLAN.md) for the full roadmap and the reasoning
 behind each decision.
+
+```bash
+pip install -e ".[model,app]"
+tabled prepare                     # build the matrix   (~40 s)
+tabled fit --model item-item       # build the model    (~2 min)
+streamlit run app.py               # swipe
+```
 
 ## Setup
 
@@ -108,6 +115,38 @@ implicit-feedback model it uses dislikes, entered as high-confidence
 observations of zero preference — in a swipe app a thumbs-down is evidence,
 not absence.
 
+## The app
+
+```bash
+streamlit run app.py
+```
+
+Fit without `--holdout` before serving real users — the held-out artifact is
+for honest evaluation and ignores 5,000 people's ratings.
+
+It opens on twelve recognisable, divisive games (Monopoly, Chess, Go,
+Cards Against Humanity…) spread across the weight range. Games everyone likes
+separate nobody; the ones that split opinion sort people fastest.
+
+Four reactions, deliberately distinct:
+
+| | feeds the model | never shown again |
+|---|---|---|
+| 👍 Like / 👎 Nope | yes | yes |
+| 🤷 Skip / ✓ Played | no | yes |
+
+A skip usually means unfamiliarity or indifference, not distaste, so folding
+it into "dislike" would poison the signal — but re-showing a skipped card
+reads as the app not listening, so it still counts as seen.
+
+Each card says why it was chosen (*Because you liked Go*), which turns a
+recommendation into a claim the user can disagree with and makes a bad
+neighbour list visible rather than merely felt.
+
+Sessions can be saved to `data/sessions/swipes.jsonl` — every metric in this
+project comes from *simulated* swiping reconstructed from BGG ratings, and
+these logs are the only record of what people do in the actual interface.
+
 ## Evaluating
 
 ```bash
@@ -176,9 +215,14 @@ src/tabled/
     split.py         hold out whole users
     metrics.py       recall@N, nDCG@N, coverage, popularity bias
     simulate.py      replay the swipe flow across a sweep of k
+  serve/
+    session.py       the four reactions, and the swipe log
+    policy.py        cold start, popularity gate, card selection
+app.py               the Streamlit shell — wiring only
 ```
 
-Layering runs `config → data → models → eval → cli`; nothing imports upwards
-or sideways.
+Layering runs `config → data → models → {eval, serve} → cli`; nothing imports
+upwards or sideways, and `eval` and `serve` are siblings so neither can reach
+into the other. `tests/test_architecture.py` enforces it.
 
 [kaggle]: https://www.kaggle.com/datasets/threnjen/board-games-database-from-boardgamegeek

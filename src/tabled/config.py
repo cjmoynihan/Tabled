@@ -49,6 +49,11 @@ MANIFEST_JSON = PROCESSED_DIR / "manifest.json"    # what was built, and how
 ITEM_ITEM_NPZ = PROCESSED_DIR / "item_item.npz"    # top-k neighbour lists
 ALS_NPZ = PROCESSED_DIR / "als.npz"                # item latent factors
 
+# Logged swipe sessions. Every metric in this project so far comes from
+# simulated swiping reconstructed from BGG ratings; this is the only file that
+# will ever record what people did in the actual interface.
+SESSIONS_LOG = DATA_DIR / "sessions" / "swipes.jsonl"
+
 # -- ingest ----------------------------------------------------------------
 # 19M rows will not fit comfortably alongside a similarity matrix, so every
 # pass over user_ratings.csv is chunked. 2M rows of (int32, float32, str)

@@ -323,15 +323,58 @@ Also decide: does a dislike push away only that game, or its neighbours too?
 Asymmetric weighting (dislikes weaker than likes) is usually right, since
 "not for me right now" and "bad game" look identical through a swipe.
 
-## Phase 5 — Streamlit app
+## Phase 5 — Streamlit app ✅
 
-Session state holds the swipe list; each swipe re-scores against the
-precomputed artifacts. Like / dislike / skip / seen-it — "skip" and "seen it"
-are different signals and conflating them loses information. Show *why* a game
-was suggested; it makes the thing feel intelligent and makes bugs visible.
+`streamlit run app.py`. Artifacts load once behind `@st.cache_resource`;
+nothing is fitted inside a request.
 
-Artifacts load once behind `@st.cache_resource`. Everything the app needs must
-be precomputed — no fitting inside a request.
+All the decisions live in `tabled.serve`, and `app.py` only wires them to
+widgets — which is why the session logic is tested without a browser, and the
+Streamlit layer is tested separately with `AppTest`.
+
+**Cold start.** Twelve recognisable, divisive games, spread across the weight
+range: Monopoly, Chess, Cards Against Humanity, Magic, Go, Poker, Diplomacy,
+Fluxx, Twilight Imperium, The Game of Life. Games everyone likes separate
+nobody; the ones that split opinion sort people fastest. The weight spread
+matters too — the most divisive popular games skew heavy, and opening with six
+sprawling strategy titles asks the same question six times.
+
+**Four reactions, kept distinct.** Like and dislike feed the model; skip and
+already-played are recorded but excluded from taste. All four count as
+*shown*, so nothing reappears — re-showing a skipped card reads as the app not
+listening, even though a skip says nothing about preference.
+
+**Cards are sampled, not maximised.** Drawn by softmax from the top 25
+eligible games. Always serving the argmax makes every session with similar
+taste identical and gives the model no way to discover it was wrong.
+
+**Explanations.** *Because you liked Go.* Free from item-item, since the score
+literally is a sum of per-neighbour terms — and impossible from the
+factorisation, which was part of the Phase 3 recommendation.
+
+### The bug this phase caught
+
+The popularity gate was first written as an absolute floor: 20,000 ratings at
+the first card relaxing to 200 by the fifteenth. It looked right on the real
+catalogue and quietly broke everywhere else — on the test fixture, whose games
+top out at a few hundred raters, the relaxed gate of 200 excluded *every*
+game the user could have wanted, so sessions converged on nothing. The
+end-to-end session test is what surfaced it.
+
+It is now a percentile of the catalogue's own popularity distribution: top 1%
+at the first card, relaxing to the median by the fifteenth. On the real data
+that reproduces the original numbers almost exactly (172 games eligible at
+the first card, 8,575 by the fifteenth) while working on any catalogue.
+Absolute thresholds tuned against one dataset are a recurring trap in this
+project — the same shape of mistake as the rating scale in Phase 1.
+
+### A real session
+
+Liking Go and then heavy strategy games walks the recommender from
+Tigris & Euphrates through Through the Ages, Terra Mystica, Agricola and
+Brass, ending on Great Western Trail, Gaia Project and Caverna. From a single
+like on Go the top eight are Chess, Shogi, Xiangqi, YINSH, DVONN, ZÈRTZ and
+TZAAR — the abstract-strategy shelf, in order.
 
 ## Phase 6 — Ship
 
