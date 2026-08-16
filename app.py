@@ -33,9 +33,25 @@ CARD_CSS = """
   .game-title { font-size: 1.55rem; font-weight: 650; line-height: 1.2; }
   .game-meta { opacity: .7; font-size: .9rem; margin-top: .35rem; }
   .game-why { font-size: .92rem; margin-top: .7rem; opacity: .85; }
+  .pick-name { font-weight: 600; line-height: 1.25; margin-top: .35rem; }
+  .pick-meta { opacity: .65; font-size: .82rem; }
   .stButton button { width: 100%; }
+
+  /* The four swipe actions are the primary control in the whole app, so they
+     get roughly half again the default size. Scoped to the swipe container:
+     the per-pick buttons in the results grid sit three-to-a-column and would
+     wrap badly at this size. */
+  .st-key-swipe-actions .stButton button {
+      min-height: 3.6rem;
+      font-size: 1.15rem;
+      font-weight: 600;
+      padding: .8rem .4rem;
+  }
+  .st-key-swipe-actions [data-testid="stHorizontalBlock"] { gap: .5rem; }
 </style>
 """
+
+PLACEHOLDER = "https://placehold.co/200x200?text=no+cover"
 
 
 @st.cache_resource(show_spinner="Loading the catalogue…")
@@ -50,20 +66,18 @@ def load():
     return ds, model, policy.cold_start_seeds(ds, n=12)
 
 
-def state(ds) -> Session:
+def cover(row) -> str:
+    path = row.get("ImagePath")
+    return path if isinstance(path, str) and path.startswith("http") else PLACEHOLDER
+
+
+def state() -> Session:
     if "session" not in st.session_state:
         st.session_state.session = Session()
         st.session_state.rng = np.random.default_rng()
         st.session_state.card = None
+        st.session_state.seeded = False
     return st.session_state.session
-
-
-def pick_card(model, session, ds, seeds) -> int | None:
-    if st.session_state.card is None:
-        st.session_state.card = policy.next_card(
-            model, session.swipes(), ds, session.shown,
-            st.session_state.rng, seeds=seeds)
-    return st.session_state.card
 
 
 def react(session: Session, game: int, reaction: Reaction) -> None:
@@ -71,6 +85,47 @@ def react(session: Session, game: int, reaction: Reaction) -> None:
     st.session_state.card = None          # force a fresh pick next run
     st.rerun()
 
+
+# --------------------------------------------------------------------------
+# opening: name a few favourites
+# --------------------------------------------------------------------------
+
+def seed_picker(ds, session: Session) -> None:
+    """
+    An optional head start.
+
+    Worth its own screen because the harness says so: three games named
+    outright score better than ten swipes, and against a harder target set,
+    since naming your favourites removes your best games from what is left to
+    find. It stays optional — it only works for people who already know what
+    they like, which is not everyone the app is for.
+    """
+    st.subheader("Start with a few games you love")
+    st.caption("Optional, and worth it — naming three games gets further than "
+               "ten swipes. Skip it if you would rather just browse.")
+
+    choices = st.multiselect(
+        "Search for games you like", options=ds.games["game_index"].tolist(),
+        format_func=lambda i: ds.games.loc[i, "Name"],
+        key="seed_choices", max_selections=10,
+        placeholder="Type a game name…")
+
+    left, right = st.columns(2)
+    if left.button("Start swiping →", type="primary",
+                   disabled=not choices):
+        for game in choices:
+            session.record(int(game), Reaction.LIKE)
+        st.session_state.seeded = True
+        st.session_state.card = None
+        st.rerun()
+    if right.button("Skip this, just show me games"):
+        st.session_state.seeded = True
+        st.rerun()
+
+
+# --------------------------------------------------------------------------
+# the card
+# --------------------------------------------------------------------------
 
 def show_card(ds, model, session, game: int) -> None:
     row = ds.games.loc[game]
@@ -84,55 +139,123 @@ def show_card(ds, model, session, game: int) -> None:
             f"&middot; weight {row['GameWeight']:.1f}/5")
 
     why = policy.explain(model, session.swipes(), game, ds.games)
-    why_html = (f'<div class="game-why">Because you liked '
-                f'<b>{why}</b></div>' if why else
+    why_html = (f'<div class="game-why">Because you liked <b>{why}</b></div>'
+                if why else
                 '<div class="game-why">A well-known game people disagree '
                 'about — a good way to start.</div>')
 
-    if isinstance(row.get("ImagePath"), str) and row["ImagePath"].startswith("http"):
-        st.image(row["ImagePath"], width=240)
-
+    st.image(cover(row), width=240)
     st.markdown(
         f'<div class="game-card"><div class="game-title">{row["Name"]}</div>'
         f'<div class="game-meta">{meta}</div>{why_html}</div>',
         unsafe_allow_html=True)
 
-    a, b, c, d = st.columns(4)
-    if a.button("👍 Like", key=f"l{game}"):
-        react(session, game, Reaction.LIKE)
-    if b.button("👎 Nope", key=f"d{game}"):
-        react(session, game, Reaction.DISLIKE)
-    if c.button("🤷 Skip", key=f"s{game}"):
-        react(session, game, Reaction.SKIP)
-    if d.button("✓ Played", key=f"p{game}"):
-        react(session, game, Reaction.PLAYED)
+    with st.container(key="swipe-actions"):
+        a, b, c, d = st.columns(4, gap="small")
+        if a.button("👍 Like", key=f"l{game}"):
+            react(session, game, Reaction.LIKE)
+        if b.button("👎 Nope", key=f"d{game}"):
+            react(session, game, Reaction.DISLIKE)
+        if c.button("🤷 Skip", key=f"s{game}"):
+            react(session, game, Reaction.SKIP)
+        if d.button("✓ Played", key=f"p{game}"):
+            react(session, game, Reaction.PLAYED)
 
-    st.caption("**Skip** and **Played** are recorded but do not shape "
-               "recommendations — only likes and dislikes say anything about "
-               "taste.")
+    st.caption("Only **Like** and **Nope** shape recommendations. **Skip** "
+               "moves on without judging — skipped games can still turn up in "
+               "your top 10. **Played** takes it off the list entirely.")
 
 
-def show_recommendations(ds, model, session) -> None:
+# --------------------------------------------------------------------------
+# the picks
+# --------------------------------------------------------------------------
+
+def show_picks(ds, model, session, columns: int = 5) -> None:
     swipes = session.swipes()
     if len(swipes) == 0:
+        st.info("Like or pass on a few games and your top ten will appear "
+                "here.")
         return
 
-    st.subheader("Your top picks so far")
-    for game in model.recommend(swipes, n=8, exclude=session.shown):
-        row = ds.games.loc[game]
-        why = policy.explain(model, swipes, game, ds.games)
-        st.markdown(
-            f"**{row['Name']}** &nbsp; <span style='opacity:.6'>"
-            f"weight {row['GameWeight']:.1f} &middot; "
-            f"BGG {row['AvgRating']:.1f}"
-            + (f" &middot; like {why}" if why else "") +
-            "</span>", unsafe_allow_html=True)
+    picks = policy.top_picks(model, swipes, ds, session.judged, n=10)
+    if not len(picks):
+        st.info("Nothing left to suggest — you have reacted to everything "
+                "we would recommend.")
+        return
+
+    st.caption("One game per series, so a run of sequels cannot fill the "
+               "list. Games you skipped can appear here — skipping meant you "
+               "did not know it, which is rather the point. React to any of "
+               "these to swap it out.")
+
+    for start in range(0, len(picks), columns):
+        for column, game in zip(st.columns(columns), picks[start:start + columns]):
+            row = ds.games.loc[game]
+            with column:
+                st.image(cover(row), use_container_width=True)
+                st.markdown(
+                    f'<div class="pick-name">{row["Name"]}</div>'
+                    f'<div class="pick-meta">weight {row["GameWeight"]:.1f}'
+                    f' &middot; BGG {row["AvgRating"]:.1f}</div>',
+                    unsafe_allow_html=True)
+                why = policy.explain(model, swipes, int(game), ds.games)
+                if why:
+                    st.caption(f"like {why}")
+
+                x, y, z = st.columns(3)
+                if x.button("👍", key=f"pl{game}", help="Like"):
+                    react(session, game, Reaction.LIKE)
+                if y.button("👎", key=f"pd{game}", help="Not for me"):
+                    react(session, game, Reaction.DISLIKE)
+                if z.button("✓", key=f"pp{game}", help="Already played"):
+                    react(session, game, Reaction.PLAYED)
+
+
+# --------------------------------------------------------------------------
+
+def sidebar(ds, session: Session) -> None:
+    with st.sidebar:
+        st.header("Session")
+        st.write(session.counts())
+
+        if st.button("↩ Undo last") and session.undo():
+            st.session_state.card = None
+            st.rerun()
+        if st.button("Start over"):
+            st.session_state.clear()
+            st.rerun()
+
+        st.divider()
+        st.caption("Take your taste with you — no account needed.")
+        if session.events:
+            st.download_button(
+                "⬇ Export my session", session.to_json(ds.games),
+                file_name="tabled-session.json", mime="application/json")
+
+        uploaded = st.file_uploader("⬆ Import a session", type="json",
+                                    key="import")
+        if uploaded is not None and not st.session_state.get("imported"):
+            st.session_state.session = Session.from_json(uploaded.getvalue(),
+                                                         ds.games)
+            st.session_state.imported = True
+            st.session_state.card = None
+            st.session_state.seeded = True
+            st.rerun()
+
+        if session.events:
+            st.divider()
+            if st.button("💾 Save to the swipe log"):
+                path = session.append_to(games=ds.games)
+                st.success(f"Appended to {config.display(path)}")
+            st.caption("The log is the only record of what people do in this "
+                       "interface, as opposed to what they rated on BGG "
+                       "years ago.")
 
 
 def main() -> None:
     st.markdown(CARD_CSS, unsafe_allow_html=True)
     ds, model, seeds = load()
-    session = state(ds)
+    session = state()
 
     st.title("🎲 Tabled")
     counts = session.counts()
@@ -140,29 +263,27 @@ def main() -> None:
                f"{counts['dislike']} passed, {len(session.events)} seen",
                unsafe_allow_html=True)
 
-    game = pick_card(model, session, ds, seeds)
-    if game is None:
-        st.success("You have been through everything we can suggest.")
-    else:
-        show_card(ds, model, session, game)
+    if not st.session_state.seeded and not session.events:
+        seed_picker(ds, session)
+        return
 
-    with st.sidebar:
-        st.header("Session")
-        st.write(counts)
-        if st.button("↩ Undo last") and session.undo():
-            st.session_state.card = None
-            st.rerun()
-        if st.button("Start over"):
-            st.session_state.clear()
-            st.rerun()
-        if session.events and st.button("💾 Save this session"):
-            path = session.append_to(games=ds.games)
-            st.success(f"Appended to {config.display(path)}")
-        st.caption("Saved sessions are the only record of what people did in "
-                   "this interface, as opposed to what they rated on BGG "
-                   "years ago.")
+    swipe, picks = st.tabs(["Swipe", f"Your top 10"])
 
-    show_recommendations(ds, model, session)
+    with swipe:
+        if st.session_state.card is None:
+            st.session_state.card = policy.next_card(
+                model, session.swipes(), ds, session.shown,
+                st.session_state.rng, seeds=seeds)
+        game = st.session_state.card
+        if game is None:
+            st.success("You have been through everything we can suggest.")
+        else:
+            show_card(ds, model, session, game)
+
+    with picks:
+        show_picks(ds, model, session)
+
+    sidebar(ds, session)
 
 
 if __name__ == "__main__":

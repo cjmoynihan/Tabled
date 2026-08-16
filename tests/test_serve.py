@@ -227,6 +227,183 @@ def test_explanation_is_absent_when_the_model_cannot_give_one(clustered):
                           clustered.games) is None
 
 
+# -- export / import -------------------------------------------------------
+
+def test_a_session_survives_a_round_trip(clustered):
+    original = Session()
+    original.record(3, Reaction.LIKE)
+    original.record(9, Reaction.DISLIKE)
+    original.record(12, Reaction.SKIP)
+
+    restored = Session.from_json(original.to_json(clustered.games),
+                                 clustered.games)
+
+    assert [e.game for e in restored.events] == [3, 9, 12]
+    assert [e.reaction for e in restored.events] == \
+        [Reaction.LIKE, Reaction.DISLIKE, Reaction.SKIP]
+    assert restored.swipes().items.tolist() == original.swipes().items.tolist()
+
+
+def test_import_resolves_by_bgg_id_not_by_index(clustered):
+    """
+    Matrix indices are positions in one build of the catalogue. If `prepare`
+    is rerun with different thresholds, index 4,102 becomes a different game —
+    so restoring by index would hand someone else's taste back to the user
+    rather than failing loudly.
+    """
+    exported = Session()
+    exported.record(3, Reaction.LIKE)
+    payload = exported.as_dict(clustered.games)
+
+    # Simulate a rebuilt catalogue: the same game now sits two columns later.
+    shifted = clustered.games.copy()
+    shifted["BGGId"] = shifted["BGGId"] + 2
+
+    restored = Session.from_json(__import__("json").dumps(payload), shifted)
+    assert [e.game for e in restored.events] == [1]
+
+
+def test_import_drops_games_that_no_longer_exist(clustered):
+    payload = {"events": [{"game": 3, "bgg_id": 99999, "reaction": "like",
+                           "position": 0}]}
+    restored = Session.from_dict(payload, clustered.games)
+
+    assert restored.events == []
+
+
+def test_import_without_a_catalogue_falls_back_to_indices():
+    payload = {"events": [{"game": 7, "reaction": "like", "position": 0}]}
+    assert Session.from_dict(payload).events[0].game == 7
+
+
+# -- top picks -------------------------------------------------------------
+
+def test_judged_covers_positions_taken_but_not_skips():
+    """
+    A skip is 'ask me later', not 'never again'. It keeps a card out of the
+    swipe stream while leaving the game eligible as a result — which matters
+    because a skip usually means the user did not recognise the game, and
+    that is exactly who a recommendation is for.
+    """
+    s = Session()
+    s.record(1, Reaction.LIKE)
+    s.record(2, Reaction.DISLIKE)
+    s.record(3, Reaction.SKIP)
+    s.record(4, Reaction.PLAYED)
+
+    assert sorted(s.shown.tolist()) == [1, 2, 3, 4]
+    assert sorted(s.judged.tolist()) == [1, 2, 4]
+
+
+def test_top_picks_exclude_games_the_user_has_judged(clustered, model):
+    session = Session()
+    session.record(CORE + 1, Reaction.LIKE)
+    session.record(CORE + 3, Reaction.PLAYED)
+
+    picks = policy.top_picks(model, session.swipes(), clustered,
+                             session.judged, n=10)
+
+    assert not set(picks.tolist()) & set(session.judged.tolist())
+
+
+def test_a_skipped_game_can_still_be_recommended(clustered, model):
+    """Skipping on a card must not bury the game in the results."""
+    session = Session()
+    session.record(CORE + 1, Reaction.LIKE)
+    first = policy.top_picks(model, session.swipes(), clustered,
+                             session.judged, n=10)
+    assert len(first)
+
+    session.record(int(first[0]), Reaction.SKIP)
+    second = policy.top_picks(model, session.swipes(), clustered,
+                              session.judged, n=10)
+
+    assert int(first[0]) in second.tolist()
+
+
+def test_reacting_to_a_pick_removes_it_and_repopulates(clustered, model):
+    session = Session()
+    session.record(CORE + 1, Reaction.LIKE)
+    before = policy.top_picks(model, session.swipes(), clustered,
+                              session.judged, n=10)
+
+    session.record(int(before[0]), Reaction.PLAYED)
+    after = policy.top_picks(model, session.swipes(), clustered,
+                             session.judged, n=10)
+
+    assert len(after) == len(before)
+    assert int(before[0]) not in after.tolist()
+
+
+def test_a_skipped_card_still_leaves_the_swipe_stream(clustered, model):
+    """The other half of the same rule: eligible as a result, but not served
+    as a card again."""
+    session = Session()
+    session.record(CORE + 1, Reaction.LIKE)
+    rng = np.random.default_rng(0)
+
+    for _ in range(12):
+        card = policy.next_card(model, session.swipes(), clustered,
+                                session.shown, rng)
+        assert card not in session.shown.tolist()
+        session.record(card, Reaction.SKIP)
+
+
+def test_no_picks_before_any_taste_signal(clustered, model):
+    assert len(policy.top_picks(model, Session().swipes(), clustered,
+                                np.array([], dtype=np.int64))) == 0
+
+
+def test_the_card_stream_stops_marching_through_one_series(clustered, model):
+    """
+    A third game from a series the user has already judged twice is a question
+    whose answer is known.
+
+    The session is run far enough in that the popularity gate has relaxed —
+    otherwise the gate, not the family cap, decides what is eligible, and the
+    test would pass without exercising anything.
+    """
+    games = clustered.games.copy()
+    # The series sits inside cluster 0, which is what this user likes, so the
+    # model actively wants to serve more of it.
+    games["Family"] = ["series" if CORE <= g < CORE + BLOCK else None
+                       for g in range(len(games))]
+    ds = type(clustered)(matrix=clustered.matrix, games=games,
+                         usernames=clustered.usernames,
+                         manifest=clustered.manifest)
+
+    session = Session()
+    session.record(CORE, Reaction.LIKE)
+    session.record(CORE + 1, Reaction.LIKE)
+    for game in range(2, 16):                 # relax the popularity gate
+        session.record(game, Reaction.DISLIKE)
+
+    card = policy.next_card(model, session.swipes(), ds, session.shown,
+                            np.random.default_rng(0), max_per_family=2)
+
+    assert card is not None
+    assert games.loc[card, "Family"] != "series", (
+        f"served a third {games.loc[card, 'Name']} from an exhausted series")
+
+
+def test_the_family_cap_yields_when_it_would_leave_nothing(clustered, model):
+    """Like the popularity gate, the cap is a preference. Better a repeated
+    series than telling the user we have run out of board games."""
+    games = clustered.games.copy()
+    games["Family"] = "everything"
+    ds = type(clustered)(matrix=clustered.matrix, games=games,
+                         usernames=clustered.usernames,
+                         manifest=clustered.manifest)
+
+    session = Session()
+    for game in range(CORE, CORE + 3):
+        session.record(game, Reaction.LIKE)
+
+    assert policy.next_card(model, session.swipes(), ds, session.shown,
+                            np.random.default_rng(0),
+                            max_per_family=2) is not None
+
+
 # -- the whole loop --------------------------------------------------------
 
 def test_a_full_session_converges_on_the_users_taste(clustered, model):

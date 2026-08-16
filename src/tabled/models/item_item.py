@@ -139,6 +139,17 @@ class ItemItem(Recommender):
         return np.bincount(flat[valid], weights=contribution[valid],
                            minlength=self.n_games)
 
+    def similarity_to(self, game: int, other: int) -> float:
+        """
+        Similarity between two games, or 0 if `other` is not a near neighbour.
+
+        Only the top-k list is stored, so this answers "are these two close"
+        rather than "how close exactly" — which is all the callers need, and
+        the reason the full 1.2 GB matrix never has to exist.
+        """
+        hit = np.flatnonzero(self._idx[game] == other)
+        return float(self._sim[game, hit[0]]) if len(hit) else 0.0
+
     def because_of(self, swipes: Swipes, game: int) -> tuple[int, float] | None:
         """
         Which swiped game contributed most to `game`'s score.

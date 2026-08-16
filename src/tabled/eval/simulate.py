@@ -25,10 +25,14 @@ from tabled.models.base import Recommender, Swipes
 log = logging.getLogger(__name__)
 
 # How the k revealed swipes are chosen from a test user's ratings.
-#   random  — unbiased, the standard choice, and the one to quote
-#   popular — the games the app would actually show first, since a card for a
-#             game nobody recognises earns a shrug rather than a signal
-SEED_POLICIES = ("random", "popular")
+#   random     — unbiased, the standard choice, and the one to quote
+#   popular    — the games the app would actually show first, since a card for
+#                a game nobody recognises earns a shrug rather than a signal
+#   favourites — the user's own highest-rated games, standing in for an
+#                "add some games you love" picker. Note that this reveals only
+#                positives: someone naming favourites volunteers no dislikes,
+#                which is a real cost the comparison has to include.
+SEED_POLICIES = ("random", "popular", "favourites")
 
 
 @dataclass
@@ -58,13 +62,18 @@ class _Accumulator:
     seen: set = field(default_factory=set)
 
 
-def _reveal(items: np.ndarray, k: int, policy: str, rng: np.random.Generator,
-            popularity: np.ndarray) -> np.ndarray:
+def _reveal(items: np.ndarray, ratings: np.ndarray, k: int, policy: str,
+            rng: np.random.Generator, popularity: np.ndarray) -> np.ndarray:
     """Positions within `items` to expose as swipes."""
     if policy == "random":
         return rng.choice(len(items), size=k, replace=False)
     if policy == "popular":
         return np.argsort(-popularity[items])[:k]
+    if policy == "favourites":
+        # Ties broken by popularity: asked to name games they love, people
+        # reach for ones they can actually remember.
+        order = np.lexsort((-popularity[items], -ratings))
+        return order[:k]
     raise ValueError(f"unknown seed policy {policy!r}")
 
 
@@ -102,7 +111,7 @@ def evaluate(model: Recommender, ds: Dataset, test_rows: np.ndarray,
             if len(items) <= k:
                 continue
 
-            shown = _reveal(items, k, policy, rng, popularity)
+            shown = _reveal(items, ratings, k, policy, rng, popularity)
             held = np.setdiff1d(np.arange(len(items)), shown,
                                 assume_unique=False)
             relevant = items[held][ratings[held] >= threshold]

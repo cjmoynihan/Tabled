@@ -29,6 +29,7 @@ import pandas as pd
 
 from tabled.data.prepare import Dataset
 from tabled.models.base import Recommender, Swipes
+from tabled.serve import diversify
 
 # How well-known a game must be to be shown, as a percentile of the
 # catalogue's own popularity distribution. The first card must be something a
@@ -112,7 +113,8 @@ def cold_start_seeds(ds: Dataset, n: int = 12, pool: int = 400,
 def next_card(model: Recommender, swipes: Swipes, ds: Dataset,
               shown: np.ndarray, rng: np.random.Generator,
               seeds: np.ndarray | None = None, top_m: int = 25,
-              temperature: float = 1.0) -> int | None:
+              temperature: float = 1.0,
+              max_per_family: int = 2) -> int | None:
     """
     The single game to show next, or None when the catalogue is exhausted.
 
@@ -140,6 +142,18 @@ def next_card(model: Recommender, swipes: Swipes, ds: Dataset,
     if np.isfinite(scores[eligible]).any():
         scores[~eligible] = -np.inf
 
+    # Having already seen two Red Dragon Inns, a third is not a question worth
+    # asking — the answer is known and the card is wasted.
+    if max_per_family and len(shown):
+        counts = diversify.family_reaction_counts(ds.games, shown)
+        exhausted = {key for key, seen in counts.items()
+                     if seen >= max_per_family}
+        if exhausted:
+            keys = diversify.family_keys(ds.games)
+            blocked = np.array([k in exhausted for k in keys])
+            if np.isfinite(scores[~blocked]).any():
+                scores[blocked] = -np.inf
+
     finite = int(np.isfinite(scores).sum())
     if finite == 0:
         return None
@@ -158,6 +172,28 @@ def next_card(model: Recommender, swipes: Swipes, ds: Dataset,
     values = (values - values.max()) / (values.std() + 1e-9) / temperature
     weights = np.exp(values)
     return int(rng.choice(top, p=weights / weights.sum()))
+
+
+def top_picks(model: Recommender, swipes: Swipes, ds: Dataset,
+              judged: np.ndarray, n: int = 10,
+              max_per_family: int = 1) -> np.ndarray:
+    """
+    The user's current best `n` games, thinned to one per series.
+
+    Over-fetches before thinning: filtering a list of exactly `n` leaves gaps,
+    so the candidate pool has to be several times longer than the answer.
+
+    `judged` should be the games the user has taken a position on — liked,
+    passed on, or already played — and *not* the ones they merely skipped. A
+    skip means they did not recognise the game, which is the best possible
+    reason to put it in front of them as a result.
+    """
+    if len(swipes) == 0:
+        return np.array([], dtype=np.int64)
+
+    candidates = model.recommend(swipes, n=n * 12, exclude=judged)
+    return diversify.diversify(candidates, ds.games, n=n,
+                               max_per_family=max_per_family, model=model)
 
 
 def explain(model: Recommender, swipes: Swipes, game: int,

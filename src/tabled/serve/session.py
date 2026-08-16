@@ -68,12 +68,31 @@ class Session:
     @property
     def shown(self) -> np.ndarray:
         """
-        Every game already put in front of the user.
+        Every game already put in front of the user, for the card stream.
 
         All four reactions count. Re-showing a card someone skipped reads as
         the app not listening, even though a skip says nothing about taste.
         """
         return np.array([e.game for e in self.events], dtype=np.int64)
+
+    @property
+    def judged(self) -> np.ndarray:
+        """
+        Games the user has actually taken a position on, for the results list.
+
+        Skips are excluded here but not from `shown`, and the difference is
+        the point. On a card, a skip means "I don't know this one" — which is
+        precisely the situation a recommendation exists to address. Hiding
+        those games from the results would suppress the ones the user is most
+        likely to find useful, purely because they were honest about not
+        recognising them.
+
+        So a skip means *ask me later*, not *never again*: the game stops
+        interrupting the swipe stream but can still surface as a result, where
+        it can be liked, passed on, or marked as already played.
+        """
+        return np.array([e.game for e in self.events
+                         if e.reaction is not Reaction.SKIP], dtype=np.int64)
 
     def swipes(self) -> Swipes:
         """Just the taste signal, in the form models consume."""
@@ -112,3 +131,45 @@ class Session:
         with path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(self.as_dict(games)) + "\n")
         return path
+
+    @classmethod
+    def from_dict(cls, payload: dict, games=None) -> "Session":
+        """
+        Rebuild a session from an exported file.
+
+        Restored by **BGGId**, not by matrix index, whenever the export
+        carries one. Indices are positions in one particular build of the
+        catalogue: rerun `tabled prepare` with different thresholds and index
+        4,102 becomes a different game, so an index-based restore would
+        silently return someone else's taste rather than failing.
+        """
+        by_bgg = None
+        if games is not None:
+            by_bgg = {int(b): int(i) for i, b in
+                      zip(games["game_index"], games["BGGId"])}
+
+        session = cls(started=float(payload.get("started") or time.time()))
+
+        for raw in payload.get("events", []):
+            game = int(raw["game"])
+            if by_bgg is not None and "bgg_id" in raw:
+                resolved = by_bgg.get(int(raw["bgg_id"]))
+                if resolved is None:
+                    continue          # game is no longer in the catalogue
+                game = resolved
+            session.events.append(Event(
+                game=game,
+                reaction=Reaction(raw["reaction"]),
+                position=int(raw.get("position", len(session.events))),
+                at=float(raw.get("at", session.started)),
+            ))
+        return session
+
+    @classmethod
+    def from_json(cls, text: str | bytes, games=None) -> "Session":
+        if isinstance(text, bytes):
+            text = text.decode("utf-8")
+        return cls.from_dict(json.loads(text), games)
+
+    def to_json(self, games=None) -> str:
+        return json.dumps(self.as_dict(games), indent=2)

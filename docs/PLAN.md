@@ -340,9 +340,19 @@ matters too — the most divisive popular games skew heavy, and opening with six
 sprawling strategy titles asks the same question six times.
 
 **Four reactions, kept distinct.** Like and dislike feed the model; skip and
-already-played are recorded but excluded from taste. All four count as
-*shown*, so nothing reappears — re-showing a skipped card reads as the app not
-listening, even though a skip says nothing about preference.
+already-played are recorded but excluded from taste.
+
+The subtle one is skip, which has *two* different meanings depending on where
+you are looking. All four reactions take a game out of the card stream —
+re-showing a skipped card reads as the app not listening. But only like,
+dislike and played remove a game from the results list. A skip means "I don't
+recognise this", which is the best possible reason to recommend something, so
+excluding skipped games from the top 10 would suppress exactly the
+suggestions the user is most likely to find useful.
+
+Hence two views on a session: `shown` governs what gets served as a card,
+`judged` governs what can appear as a result. A skip is *ask me later*, not
+*never again*.
 
 **Cards are sampled, not maximised.** Drawn by softmax from the top 25
 eligible games. Always serving the argmax makes every session with similar
@@ -368,6 +378,69 @@ the first card, 8,575 by the fifteenth) while working on any catalogue.
 Absolute thresholds tuned against one dataset are a recurring trap in this
 project — the same shape of mistake as the rating scale in Phase 1.
 
+### Should users name favourites up front? Yes — measured, not guessed
+
+Adding a `favourites` seed policy to the harness (reveal the user's own
+highest-rated games, standing in for an "add games you love" picker) answers
+this directly. nDCG@20, item-item, same 5,000 held-out users:
+
+| seeding | k=3 | k=5 | k=10 |
+|---|---|---|---|
+| favourites | **0.245** | **0.230** | 0.193 |
+| random | 0.183 | 0.208 | 0.237 |
+| popular-first | 0.171 | 0.185 | 0.170 |
+
+**Three named favourites beat ten swipes** under either other policy. And the
+comparison understates it: naming your favourites removes your *best* games
+from the pool of things left to find, so the favourites arm is scored against
+a harder target set and still wins. It also wins while volunteering no
+dislikes at all, which is the one real cost of a picker.
+
+So the app opens with an optional picker. Optional because it only works for
+people who already know what they like and can recall the names — which is
+not everyone the app is for, and swiping remains the path for them.
+
+The declining trend *within* the favourites row is an artifact of the same
+effect, not evidence that more input hurts: each extra revealed favourite
+strips another of the best answers out of the target set. Compare across
+policies at fixed k, never down a column.
+
+### Near-duplicate recommendations
+
+Liking The Red Dragon Inn returned Red Dragon Inn 2, 3, 4, 5, 6 and 7 — six of
+ten slots. Every one is a correct prediction and the list is useless. nDCG
+cannot see this; it rewards each of those hits.
+
+**A similarity threshold cannot fix it**, which is worth recording because it
+is the obvious first idea. On the real data:
+
+| pair | similarity | verdict |
+|---|---|---|
+| Red Dragon Inn → RDI 2 | 0.339 | near-duplicate, cut it |
+| Ticket to Ride → TTR: Europe | 0.293 | arguably the same |
+| Codenames → Codenames: Duet | 0.255 | different game, keep it |
+| Codenames → Codenames: Pictures | 0.193 | different game, keep it |
+
+The cases interleave. Any cutoff removing RDI 2 also removes Codenames: Duet.
+
+The `Family` column does work, because it encodes publisher intent rather than
+statistical closeness — 5,694 of 17,140 games carry one, and it groups exactly
+the series that cause trouble. Recommendation lists now allow one game per
+family, and the swipe stream stops offering a series after two reactions to
+it. Games without a family fall back to a deliberately loose similarity cap,
+which exists to catch outright twins rather than make fine judgements.
+
+Result on the real data:
+
+- **Red Dragon Inn** → keeps RDI 2, promotes Munchkin, Fluxx, Guillotine,
+  Exploding Kittens, BANG!, Smash Up, Betrayal at House on the Hill.
+- **Codenames** → keeps Duet, drops Pictures, promotes Concordia.
+- **Ticket to Ride** → keeps Europe, drops Nordic Countries and Märklin.
+
+There is a judgement embedded here worth revisiting with real users: the cap
+assumes you want the *best* member of a series and nothing else. Someone who
+loves Red Dragon Inn may well want to know there are six more.
+
 ### A real session
 
 Liking Go and then heavy strategy games walks the recommender from
@@ -376,7 +449,20 @@ Brass, ending on Great Western Trail, Gaia Project and Caverna. From a single
 like on Go the top eight are Chess, Shogi, Xiangqi, YINSH, DVONN, ZÈRTZ and
 TZAAR — the abstract-strategy shelf, in order.
 
-## Phase 6 — Ship
+## Phase 6 — Accounts, and shipping
+
+**Export/import exists now**: a session downloads as JSON and re-uploads to
+restore, so people can come back without re-swiping and without an account.
+Restore resolves games by **BGGId, not by matrix index** — indices are
+positions in one build of the catalogue, so rerunning `prepare` with different
+thresholds would silently hand someone else's taste back.
+
+Accounts are the next step up and are genuinely a different problem: storing
+identifiable preference data means auth, a real database, and a privacy
+position. The export file is worth having regardless, since it is also the
+migration path into whatever account system arrives.
+
+## Phase 7 — Ship
 
 Streamlit Community Cloud, with artifacts built offline and committed to
 release storage rather than rebuilt on deploy. Log swipe sessions from the

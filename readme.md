@@ -124,20 +124,43 @@ streamlit run app.py
 Fit without `--holdout` before serving real users — the held-out artifact is
 for honest evaluation and ignores 5,000 people's ratings.
 
-It opens on twelve recognisable, divisive games (Monopoly, Chess, Go,
-Cards Against Humanity…) spread across the weight range. Games everyone likes
-separate nobody; the ones that split opinion sort people fastest.
+It opens with an optional picker: name a few games you love and skip ahead.
+Worth doing — the harness says three named favourites get further than ten
+swipes, against a harder target set. Skip it and you get twelve recognisable,
+divisive games instead (Monopoly, Chess, Go, Cards Against Humanity…) spread
+across the weight range. Games everyone likes separate nobody; the ones that
+split opinion sort people fastest.
+
+Your **top 10** sits in its own tab, with covers, and each pick can be liked,
+passed or marked as played — which drops it and refills the list.
+
+Skipping is deliberately *not* a rejection. A skip means "I don't know this
+one", so the game stops interrupting the swipe stream but stays eligible as a
+result — which is the point, since an unfamiliar game is exactly what a
+recommendation is for. Only Like, Nope and Played remove a game from your
+top 10.
+
+Lists allow **one game per series**. Liking The Red Dragon Inn used to return
+Red Dragon Inn 2 through 7; now it returns RDI 2 and then Munchkin, Fluxx,
+Guillotine, BANG!. Codenames still yields Codenames: Duet, because that is a
+genuinely different game — the distinction comes from the `Family` column, not
+a similarity threshold, since no threshold separates those two cases.
+
+Sessions **export and import** as JSON, so you can come back without an
+account. Restore matches on BGGId rather than matrix index, so a rebuilt
+catalogue cannot silently return someone else's taste.
 
 Four reactions, deliberately distinct:
 
-| | feeds the model | never shown again |
-|---|---|---|
-| 👍 Like / 👎 Nope | yes | yes |
-| 🤷 Skip / ✓ Played | no | yes |
+| | shapes recommendations | shown as a card again | can appear in your top 10 |
+|---|---|---|---|
+| 👍 Like / 👎 Nope | yes | no | no |
+| ✓ Played | no | no | no |
+| 🤷 Skip | no | no | **yes** |
 
 A skip usually means unfamiliarity or indifference, not distaste, so folding
-it into "dislike" would poison the signal — but re-showing a skipped card
-reads as the app not listening, so it still counts as seen.
+it into "dislike" would poison the signal. It is the one reaction that leaves
+the card stream without removing the game from the results.
 
 Each card says why it was chosen (*Because you liked Go*), which turns a
 recommendation into a claim the user can disagree with and makes a bad
@@ -216,8 +239,9 @@ src/tabled/
     metrics.py       recall@N, nDCG@N, coverage, popularity bias
     simulate.py      replay the swipe flow across a sweep of k
   serve/
-    session.py       the four reactions, and the swipe log
+    session.py       the four reactions, export/import, the swipe log
     policy.py        cold start, popularity gate, card selection
+    diversify.py     one game per series, so sequels cannot fill a list
 app.py               the Streamlit shell — wiring only
 ```
 
