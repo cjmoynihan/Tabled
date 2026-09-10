@@ -1,0 +1,5 @@
+# Streamlit Community Cloud installs this from the repo root.
+# `.[app]` installs the tabled package itself plus streamlit, so the runtime
+# dependencies stay declared in one place (pyproject.toml) rather than drifting
+# between two files.
+.[app]

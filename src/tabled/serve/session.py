@@ -32,13 +32,25 @@ from tabled.models.base import Swipes
 class Reaction(str, Enum):
     LIKE = "like"
     DISLIKE = "dislike"
-    SKIP = "skip"            # shown, not chosen — indifference or ignorance
+    SKIP = "skip"            # shown, not chosen: indifference or ignorance
     PLAYED = "played"        # knows it already; useless as a suggestion
+    DISMISS = "dismiss"      # "move past this", from the results list
 
     @property
     def is_taste(self) -> bool:
         """Whether this reaction should reach the model."""
         return self in (Reaction.LIKE, Reaction.DISLIKE)
+
+    @property
+    def is_settled(self) -> bool:
+        """
+        Whether the user is done with this game for good.
+
+        Everything except SKIP. A skip on a card means "I don't know this
+        one", which leaves the game eligible as a result; the rest are
+        positions the user has taken and does not want revisited.
+        """
+        return self is not Reaction.SKIP
 
 
 @dataclass
@@ -89,10 +101,10 @@ class Session:
 
         So a skip means *ask me later*, not *never again*: the game stops
         interrupting the swipe stream but can still surface as a result, where
-        it can be liked, passed on, or marked as already played.
+        it can be liked, passed on, or dismissed outright.
         """
-        return np.array([e.game for e in self.events
-                         if e.reaction is not Reaction.SKIP], dtype=np.int64)
+        return np.array([e.game for e in self.events if e.reaction.is_settled],
+                        dtype=np.int64)
 
     def swipes(self) -> Swipes:
         """Just the taste signal, in the form models consume."""

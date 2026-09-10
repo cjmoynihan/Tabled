@@ -102,10 +102,12 @@ def test_config_path_constants_are_all_used():
     import tabled.config as cfg
 
     config_src = (PACKAGE / "config.py").read_text(encoding="utf-8")
-    elsewhere = "\n".join(
-        p.read_text(encoding="utf-8")
-        for p in [*PACKAGE.rglob("*.py"), *Path(__file__).parent.rglob("*.py")]
-        if p.name != "config.py")
+    # app.py lives outside the package but is still project code that reads
+    # config, so it counts as a use.
+    sources = [*PACKAGE.rglob("*.py"), *Path(__file__).parent.rglob("*.py"),
+               cfg.ROOT / "app.py"]
+    elsewhere = "\n".join(p.read_text(encoding="utf-8") for p in sources
+                          if p.name != "config.py" and p.exists())
 
     names = [n for n in dir(cfg)
              if n.isupper() and isinstance(getattr(cfg, n), Path)]

@@ -161,7 +161,7 @@ Four reactions, deliberately distinct:
 | | shapes recommendations | shown as a card again | can appear in your top 10 |
 |---|---|---|---|
 | 👍 Like / 👎 Nope | yes | no | no |
-| ✓ Played | no | no | no |
+| ✓ Played, ⊘ Dismiss | no | no | no |
 | 🤷 Skip | no | no | **yes** |
 
 A skip usually means unfamiliarity or indifference, not distaste, so folding
@@ -175,6 +175,36 @@ neighbour list visible rather than merely felt.
 Sessions can be saved to `data/sessions/swipes.jsonl` — every metric in this
 project comes from *simulated* swiping reconstructed from BGG ratings, and
 these logs are the only record of what people do in the actual interface.
+
+## Deploying
+
+Streamlit Community Cloud builds from the repo, so the two artifacts the app
+reads are committed (~17 MB together) while the 400 MB export and the 146 MB
+ratings matrix stay out of git.
+
+```bash
+tabled prepare                  # writes games.parquet (with popularity)
+tabled fit --model item-item    # writes item_item.npz, ~2 min
+```
+
+Note the missing `--holdout`: that flag exists so evaluation stays honest by
+ignoring 5,000 users, which is the wrong trade for something being served.
+
+Then commit `data/processed/games.parquet` and `data/processed/item_item.npz`,
+push, and point Community Cloud at `app.py`. `requirements.txt` installs the
+package itself via `.[app]`, so dependencies stay declared once in
+`pyproject.toml`.
+
+**The app never loads the ratings matrix.** It exists to fit models; the one
+thing serving used it for, counting ratings per game, is now a column in
+`games.parquet`. Skipping it takes the process from 352 MB to **188 MB**,
+comfortably inside Community Cloud's 1 GB, and removes a 146 MB read from
+every cold start, which is most of what a visitor waits through when the app
+wakes from sleep.
+
+Add `assets/powered-by-bgg.png` for the BoardGameGeek attribution the data
+terms require; see [assets/README.md](assets/README.md). Without it the app
+falls back to a text link, so attribution is never silently missing.
 
 ## Evaluating
 
@@ -249,6 +279,7 @@ src/tabled/
     policy.py        cold start, popularity gate, card selection
     diversify.py     one game per series, so sequels cannot fill a list
     labels.py        year suffixes for the 249 duplicated game names
+    profile.py       a written description of what someone likes
 app.py               the Streamlit shell — wiring only
 ```
 

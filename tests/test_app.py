@@ -178,13 +178,45 @@ def test_reacting_to_a_pick_removes_it_and_refills_the_list():
     before = picks(at)
     assert len(before) >= 2
 
-    # The per-pick buttons are keyed by game, so find one by its help text.
-    played = next(b for b in at.button if b.label == "✓")
-    played.click().run()
+    next(b for b in at.button if b.label == "⊘").click().run()
     after = picks(at)
 
     assert before[0] not in after
     assert len(after) == len(before), "the list should refill"
+
+
+def test_the_picks_grid_pins_the_buttons_to_a_common_baseline():
+    """
+    Cover, title, meta and reason ship as one fixed-height block. Rendered as
+    separate elements, a two line title pushed that column's buttons below its
+    neighbours' and the row looked broken.
+    """
+    at = opened()
+    button(at, "👍 Like").click().run()
+
+    css = next(b.value for b in at.markdown if "<style>" in b.value)
+    assert ".pick {" in css and "min-height" in css
+
+    cards = [b.value for b in at.markdown if 'class="pick"' in b.value]
+    assert cards, "no pick cards rendered"
+    for card_html in cards:
+        # Every card carries all four rows, so they are all the same height
+        # even when a game has no reason to show.
+        for part in ("pick-art", "pick-name", "pick-meta", "pick-why"):
+            assert part in card_html
+
+
+def test_attribution_links_back_to_boardgamegeek():
+    """Using this data requires the credit, so it must survive a missing
+    logo file rather than silently disappearing."""
+    at = opened()
+    credit = [b.value for b in at.markdown if "bgg-credit" in b.value
+              and "<style>" not in b.value]
+
+    assert credit, "no attribution rendered"
+    assert "https://boardgamegeek.com" in credit[0]
+    assert ("Powered by BoardGameGeek" in credit[0]
+            or "data:image/" in credit[0])
 
 
 # -- session ---------------------------------------------------------------

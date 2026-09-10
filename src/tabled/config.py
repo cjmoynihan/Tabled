@@ -29,6 +29,7 @@ def project_root() -> Path:
 ROOT = project_root()
 
 DATA_DIR = Path(os.environ.get("TABLED_DATA") or ROOT / "data")
+ASSETS_DIR = Path(os.environ.get("TABLED_ASSETS") or ROOT / "assets")
 RAW_DIR = Path(os.environ.get("TABLED_RAW") or DATA_DIR / "raw")
 PROCESSED_DIR = Path(os.environ.get("TABLED_PROCESSED") or DATA_DIR / "processed")
 

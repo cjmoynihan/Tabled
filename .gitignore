@@ -16,8 +16,16 @@ venv/
 ENV/
 env/
 
-# Collected data
-data/
+# Collected data. The raw export (400 MB) and the ratings matrix (146 MB) stay
+# out of git; the two artifacts the deployed app actually reads are committed,
+# because Streamlit Community Cloud builds straight from the repo and has no
+# other way to get them. Together they are ~17 MB.
+data/*
+!data/processed/
+data/processed/*
+!data/processed/games.parquet
+!data/processed/item_item.npz
+
 raw_cache/
 *.sqlite
 *.sqlite-wal

@@ -55,7 +55,7 @@ def test_every_reaction_counts_as_shown():
     for game, reaction in enumerate(Reaction):
         s.record(game, reaction)
 
-    assert sorted(s.shown.tolist()) == [0, 1, 2, 3]
+    assert sorted(s.shown.tolist()) == list(range(len(Reaction)))
 
 
 def test_skip_and_dislike_are_not_the_same_signal():
@@ -290,9 +290,27 @@ def test_judged_covers_positions_taken_but_not_skips():
     s.record(2, Reaction.DISLIKE)
     s.record(3, Reaction.SKIP)
     s.record(4, Reaction.PLAYED)
+    s.record(5, Reaction.DISMISS)
 
-    assert sorted(s.shown.tolist()) == [1, 2, 3, 4]
-    assert sorted(s.judged.tolist()) == [1, 2, 4]
+    assert sorted(s.shown.tolist()) == [1, 2, 3, 4, 5]
+    assert sorted(s.judged.tolist()) == [1, 2, 4, 5]
+
+
+def test_dismiss_is_recorded_as_itself_not_as_played():
+    """
+    The results list needs a "move past this" control, and it behaves exactly
+    like Played: gone from the cards, gone from the picks. It is logged
+    separately because the swipe log is training data for later, and recording
+    "played" for a game the user merely waved away would be a plain untruth
+    sitting in the dataset.
+    """
+    s = Session()
+    s.record(1, Reaction.DISMISS)
+
+    assert s.counts()["dismiss"] == 1
+    assert s.counts()["played"] == 0
+    assert len(s.swipes()) == 0          # not a taste signal
+    assert s.judged.tolist() == [1]      # but settled
 
 
 def test_top_picks_exclude_games_the_user_has_judged(clustered, model):

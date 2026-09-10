@@ -15,13 +15,15 @@ would simply time out.
 
 from __future__ import annotations
 
+import base64
+
 import numpy as np
 import streamlit as st
 
 from tabled import config
 from tabled.data import prepare
 from tabled.models import store
-from tabled.serve import labels, policy
+from tabled.serve import labels, policy, profile
 from tabled.serve.session import Reaction, Session
 
 st.set_page_config(page_title="Tabled", page_icon="🎲", layout="centered")
@@ -33,9 +35,25 @@ CARD_CSS = """
   .game-title { font-size: 1.55rem; font-weight: 650; line-height: 1.2; }
   .game-meta { opacity: .7; font-size: .9rem; margin-top: .35rem; }
   .game-why { font-size: .92rem; margin-top: .7rem; opacity: .85; }
-  .pick-name { font-weight: 600; line-height: 1.25; margin-top: .35rem; }
-  .pick-meta { opacity: .65; font-size: .82rem; }
+  /* The picks grid. Every card is the same height so the action buttons
+     underneath line up across a row: a long title or a long reason would
+     otherwise push one column's buttons below its neighbours', and the row
+     would look broken. The cover sits in a fixed box and is letterboxed
+     rather than cropped, since box art is not a consistent aspect ratio. */
+  .pick { min-height: 232px; display: flex; flex-direction: column; }
+  .pick-art { height: 130px; display: flex; align-items: center;
+              justify-content: center; }
+  .pick-art img { max-height: 130px; max-width: 100%; object-fit: contain;
+                  border-radius: 8px; }
+  .pick-name { font-weight: 600; line-height: 1.25; margin-top: .4rem;
+               font-size: .92rem; }
+  .pick-meta { opacity: .65; font-size: .78rem; }
+  .pick-why  { opacity: .55; font-size: .74rem; margin-top: .15rem; }
+
   .stButton button { width: 100%; }
+
+  .bgg-credit { text-align: center; opacity: .75; margin-top: 2.5rem; }
+  .bgg-credit img { max-width: 160px; }
 
   /* The four swipe actions are the primary control in the whole app, so they
      get roughly half again the default size. Scoped to the swipe container:
@@ -56,7 +74,15 @@ PLACEHOLDER = "https://placehold.co/200x200?text=no+cover"
 
 @st.cache_resource(show_spinner="Loading the catalogue…")
 def load():
-    ds = prepare.load()
+    """
+    Load only what serving needs.
+
+    Notably not the ratings matrix: it exists to fit models, and the one thing
+    the app used it for is now a column. Skipping it takes the process from
+    352 MB to 191 MB and removes a 146 MB read from every cold start, which is
+    most of what a visitor waits for when the app wakes from sleep.
+    """
+    ds = prepare.load_catalogue()
     try:
         model = store.load_item_item(config.ITEM_ITEM_NPZ, ds.shape[1])
     except FileNotFoundError:
@@ -192,32 +218,70 @@ def show_picks(ds, model, session, names, columns: int = 5) -> None:
     for start in range(0, len(picks), columns):
         for column, game in zip(st.columns(columns), picks[start:start + columns]):
             row = ds.games.loc[game]
+            why = policy.explain(model, swipes, int(game), ds.games, names)
             with column:
-                st.image(cover(row), width="stretch")
+                # Cover, title, meta and reason go out as one fixed-height
+                # block. Rendering them as separate Streamlit elements is what
+                # let a two-line title shove this column's buttons a row
+                # lower than its neighbours'.
                 st.markdown(
+                    f'<div class="pick">'
+                    f'<div class="pick-art"><img src="{cover(row)}"></div>'
                     f'<div class="pick-name">{names[game]}</div>'
                     f'<div class="pick-meta">weight {row["GameWeight"]:.1f}'
-                    f' &middot; BGG {row["AvgRating"]:.1f}</div>',
+                    f' &middot; BGG {row["AvgRating"]:.1f}</div>'
+                    f'<div class="pick-why">{f"like {why}" if why else ""}</div>'
+                    f'</div>',
                     unsafe_allow_html=True)
-                why = policy.explain(model, swipes, int(game), ds.games, names)
-                if why:
-                    st.caption(f"like {why}")
 
                 x, y, z = st.columns(3)
-                if x.button("👍", key=f"pl{game}", help="Like"):
+                if x.button("👍", key=f"pl{game}", help="Like this"):
                     react(session, game, Reaction.LIKE)
                 if y.button("👎", key=f"pd{game}", help="Not for me"):
                     react(session, game, Reaction.DISLIKE)
-                if z.button("✓", key=f"pp{game}", help="Already played"):
-                    react(session, game, Reaction.PLAYED)
+                if z.button("⊘", key=f"pp{game}",
+                            help="Move past this one"):
+                    react(session, game, Reaction.DISMISS)
 
 
 # --------------------------------------------------------------------------
 
+def taste_panel(ds, session: Session) -> None:
+    """
+    What we think this person likes, in their own terms.
+
+    Worth more than the raw counts it replaces: a written description is a
+    claim the user can immediately agree or disagree with, which a ranked list
+    of ten titles is not. It is computed from what they actually said, never
+    from the model's inferences, so it cannot simply agree with itself.
+    """
+    counts = session.counts()
+    liked, passed = counts["like"], counts["dislike"]
+    seen = len(session.events)
+
+    a, b, c = st.columns(3)
+    a.metric("Seen", seen)
+    b.metric("Liked", liked)
+    c.metric("Passed", passed)
+
+    if liked or passed:
+        share = liked / (liked + passed)
+        st.progress(share, text=f"{share:.0%} of your calls were likes")
+
+    summary = profile.summarise(ds.games, session.swipes().liked)
+    if summary:
+        st.markdown(profile.sentence(summary))
+    elif liked < 3:
+        st.caption(f"Like {3 - liked} more game"
+                   f"{'s' if 3 - liked != 1 else ''} and a description of "
+                   f"your taste will appear here.")
+
+
 def sidebar(ds, session: Session) -> None:
     with st.sidebar:
-        st.header("Session")
-        st.write(session.counts())
+        st.header("Your taste")
+        taste_panel(ds, session)
+        st.divider()
 
         if st.button("↩ Undo last") and session.undo():
             st.session_state.card = None
@@ -253,6 +317,36 @@ def sidebar(ds, session: Session) -> None:
                        "years ago.")
 
 
+def bgg_credit() -> None:
+    """
+    Attribution, which using this data requires.
+
+    Falls back to a text link when the logo file is absent, so a missing asset
+    degrades to something still correct and still linked, rather than a broken
+    image or, worse, no attribution at all.
+    """
+    # Preference order, best first. Alphabetical order would pick .jpeg over
+    # .svg, which is backwards: JPEG cannot do transparency, so on the dark
+    # theme it renders as a white box around the logo.
+    logo = next((p for suffix in (".svg", ".png", ".jpg", ".jpeg")
+                 for p in [config.ASSETS_DIR / f"powered-by-bgg{suffix}"]
+                 if p.exists()), None)
+
+    if logo is not None:
+        encoded = base64.b64encode(logo.read_bytes()).decode("ascii")
+        mime = "svg+xml" if logo.suffix.lower() == ".svg" else "png"
+        inner = (f'<img src="data:image/{mime};base64,{encoded}" '
+                 f'alt="Powered by BoardGameGeek">')
+    else:
+        inner = "Powered by BoardGameGeek"
+
+    st.markdown(
+        f'<div class="bgg-credit">'
+        f'<a href="https://boardgamegeek.com" target="_blank" '
+        f'rel="noopener">{inner}</a></div>',
+        unsafe_allow_html=True)
+
+
 def main() -> None:
     st.markdown(CARD_CSS, unsafe_allow_html=True)
     ds, model, seeds, names = load()
@@ -285,6 +379,7 @@ def main() -> None:
         show_picks(ds, model, session, names)
 
     sidebar(ds, session)
+    bgg_credit()
 
 
 if __name__ == "__main__":
