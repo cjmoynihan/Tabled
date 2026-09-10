@@ -197,12 +197,18 @@ def top_picks(model: Recommender, swipes: Swipes, ds: Dataset,
 
 
 def explain(model: Recommender, swipes: Swipes, game: int,
-            games: pd.DataFrame) -> str | None:
-    """A human-readable reason, when the model can give one."""
+            games: pd.DataFrame, names: np.ndarray | None = None) -> str | None:
+    """
+    A human-readable reason, when the model can give one.
+
+    `names` lets the caller pass disambiguated labels, so an explanation
+    citing Cosmic Encounter says which of the four it means.
+    """
     reason = getattr(model, "because_of", None)
     if reason is None:
         return None
     found = reason(swipes, game)
     if found is None:
         return None
-    return str(games.loc[found[0], "Name"])
+    return str(names[found[0]] if names is not None
+               else games.loc[found[0], "Name"])

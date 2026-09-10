@@ -146,6 +146,12 @@ Guillotine, BANG!. Codenames still yields Codenames: Duet, because that is a
 genuinely different game — the distinction comes from the `Family` column, not
 a similarity threshold, since no threshold separates those two cases.
 
+249 titles are shared by more than one game: four are called Cosmic Encounter,
+five Robin Hood. Those get a year appended (`Cosmic Encounter (2008)`) so you
+can tell which you are picking. The other 96.9% of names are left alone, since
+disambiguating everything would make every list noisier to fix a problem
+affecting 3% of it.
+
 Sessions **export and import** as JSON, so you can come back without an
 account. Restore matches on BGGId rather than matrix index, so a rebuilt
 catalogue cannot silently return someone else's taste.
@@ -242,6 +248,7 @@ src/tabled/
     session.py       the four reactions, export/import, the swipe log
     policy.py        cold start, popularity gate, card selection
     diversify.py     one game per series, so sequels cannot fill a list
+    labels.py        year suffixes for the 249 duplicated game names
 app.py               the Streamlit shell — wiring only
 ```
 

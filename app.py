@@ -21,7 +21,7 @@ import streamlit as st
 from tabled import config
 from tabled.data import prepare
 from tabled.models import store
-from tabled.serve import policy
+from tabled.serve import labels, policy
 from tabled.serve.session import Reaction, Session
 
 st.set_page_config(page_title="Tabled", page_icon="🎲", layout="centered")
@@ -63,7 +63,8 @@ def load():
         st.error("No fitted model found. Run `tabled fit --model item-item` "
                  "first, then reload this page.")
         st.stop()
-    return ds, model, policy.cold_start_seeds(ds, n=12)
+    return (ds, model, policy.cold_start_seeds(ds, n=12),
+            labels.display_names(ds.games))
 
 
 def cover(row) -> str:
@@ -90,23 +91,23 @@ def react(session: Session, game: int, reaction: Reaction) -> None:
 # opening: name a few favourites
 # --------------------------------------------------------------------------
 
-def seed_picker(ds, session: Session) -> None:
+def seed_picker(ds, session: Session, names) -> None:
     """
     An optional head start.
 
     Worth its own screen because the harness says so: three games named
     outright score better than ten swipes, and against a harder target set,
     since naming your favourites removes your best games from what is left to
-    find. It stays optional — it only works for people who already know what
-    they like, which is not everyone the app is for.
+    find. It stays optional, because it only works for people who already know
+    what they like, which is not everyone the app is for.
     """
     st.subheader("Start with a few games you love")
-    st.caption("Optional, and worth it — naming three games gets further than "
-               "ten swipes. Skip it if you would rather just browse.")
+    st.caption("Optional, and worth doing. Naming three games gets you "
+               "further than ten swipes. Skip it if you would rather browse.")
 
     choices = st.multiselect(
         "Search for games you like", options=ds.games["game_index"].tolist(),
-        format_func=lambda i: ds.games.loc[i, "Name"],
+        format_func=lambda i: names[i],
         key="seed_choices", max_selections=10,
         placeholder="Type a game name…")
 
@@ -127,26 +128,27 @@ def seed_picker(ds, session: Session) -> None:
 # the card
 # --------------------------------------------------------------------------
 
-def show_card(ds, model, session, game: int) -> None:
+def show_card(ds, model, session, game: int, names) -> None:
     row = ds.games.loc[game]
 
-    players = f"{int(row['MinPlayers'])}–{int(row['MaxPlayers'])} players"
+    players = f"{int(row['MinPlayers'])} to {int(row['MaxPlayers'])} players"
     if row["MinPlayers"] == row["MaxPlayers"]:
         players = f"{int(row['MinPlayers'])} players"
     year = int(row["YearPublished"])
     meta = (f"{year if year > 0 else 'ancient'} &middot; {players} "
-            f"&middot; {int(row['ComMinPlaytime'])}–{int(row['ComMaxPlaytime'])} min "
+            f"&middot; {int(row['ComMinPlaytime'])} to "
+            f"{int(row['ComMaxPlaytime'])} min "
             f"&middot; weight {row['GameWeight']:.1f}/5")
 
-    why = policy.explain(model, session.swipes(), game, ds.games)
+    why = policy.explain(model, session.swipes(), game, ds.games, names)
     why_html = (f'<div class="game-why">Because you liked <b>{why}</b></div>'
                 if why else
-                '<div class="game-why">A well-known game people disagree '
-                'about — a good way to start.</div>')
+                '<div class="game-why">A famous game that people disagree '
+                'about. A good way to start.</div>')
 
     st.image(cover(row), width=240)
     st.markdown(
-        f'<div class="game-card"><div class="game-title">{row["Name"]}</div>'
+        f'<div class="game-card"><div class="game-title">{names[game]}</div>'
         f'<div class="game-meta">{meta}</div>{why_html}</div>',
         unsafe_allow_html=True)
 
@@ -162,15 +164,15 @@ def show_card(ds, model, session, game: int) -> None:
             react(session, game, Reaction.PLAYED)
 
     st.caption("Only **Like** and **Nope** shape recommendations. **Skip** "
-               "moves on without judging — skipped games can still turn up in "
-               "your top 10. **Played** takes it off the list entirely.")
+               "moves on without judging, and skipped games can still turn up "
+               "in your top 10. **Played** takes it off the list for good.")
 
 
 # --------------------------------------------------------------------------
 # the picks
 # --------------------------------------------------------------------------
 
-def show_picks(ds, model, session, columns: int = 5) -> None:
+def show_picks(ds, model, session, names, columns: int = 5) -> None:
     swipes = session.swipes()
     if len(swipes) == 0:
         st.info("Like or pass on a few games and your top ten will appear "
@@ -179,26 +181,25 @@ def show_picks(ds, model, session, columns: int = 5) -> None:
 
     picks = policy.top_picks(model, swipes, ds, session.judged, n=10)
     if not len(picks):
-        st.info("Nothing left to suggest — you have reacted to everything "
-                "we would recommend.")
+        st.info("Nothing left to suggest. You have reacted to everything we "
+                "would recommend.")
         return
 
     st.caption("One game per series, so a run of sequels cannot fill the "
-               "list. Games you skipped can appear here — skipping meant you "
-               "did not know it, which is rather the point. React to any of "
-               "these to swap it out.")
+               "list. Games you skipped can appear here, since skipping meant "
+               "you did not know it. React to any of these to swap it out.")
 
     for start in range(0, len(picks), columns):
         for column, game in zip(st.columns(columns), picks[start:start + columns]):
             row = ds.games.loc[game]
             with column:
-                st.image(cover(row), use_container_width=True)
+                st.image(cover(row), width="stretch")
                 st.markdown(
-                    f'<div class="pick-name">{row["Name"]}</div>'
+                    f'<div class="pick-name">{names[game]}</div>'
                     f'<div class="pick-meta">weight {row["GameWeight"]:.1f}'
                     f' &middot; BGG {row["AvgRating"]:.1f}</div>',
                     unsafe_allow_html=True)
-                why = policy.explain(model, swipes, int(game), ds.games)
+                why = policy.explain(model, swipes, int(game), ds.games, names)
                 if why:
                     st.caption(f"like {why}")
 
@@ -226,7 +227,7 @@ def sidebar(ds, session: Session) -> None:
             st.rerun()
 
         st.divider()
-        st.caption("Take your taste with you — no account needed.")
+        st.caption("Take your taste with you. No account needed.")
         if session.events:
             st.download_button(
                 "⬇ Export my session", session.to_json(ds.games),
@@ -254,7 +255,7 @@ def sidebar(ds, session: Session) -> None:
 
 def main() -> None:
     st.markdown(CARD_CSS, unsafe_allow_html=True)
-    ds, model, seeds = load()
+    ds, model, seeds, names = load()
     session = state()
 
     st.title("🎲 Tabled")
@@ -264,10 +265,10 @@ def main() -> None:
                unsafe_allow_html=True)
 
     if not st.session_state.seeded and not session.events:
-        seed_picker(ds, session)
+        seed_picker(ds, session, names)
         return
 
-    swipe, picks = st.tabs(["Swipe", f"Your top 10"])
+    swipe, picks = st.tabs(["Swipe", "Your top 10"])
 
     with swipe:
         if st.session_state.card is None:
@@ -278,10 +279,10 @@ def main() -> None:
         if game is None:
             st.success("You have been through everything we can suggest.")
         else:
-            show_card(ds, model, session, game)
+            show_card(ds, model, session, game, names)
 
     with picks:
-        show_picks(ds, model, session)
+        show_picks(ds, model, session, names)
 
     sidebar(ds, session)
 
