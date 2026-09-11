@@ -52,6 +52,21 @@ CARD_CSS = """
 
   .stButton button { width: 100%; }
 
+  /* The picks grid buttons hold a single glyph. Streamlit's default label
+     padding is sized for words, which leaves a bare emoji sitting off centre;
+     flex centring with the horizontal padding removed puts it in the middle
+     of the button regardless of the glyph's own side bearings. */
+  .st-key-picks-grid .stButton button {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding-left: 0;
+      padding-right: 0;
+      font-size: 1.05rem;
+      line-height: 1;
+  }
+  .st-key-picks-grid .stButton button p { margin: 0; }
+
   .bgg-credit { text-align: center; opacity: .75; margin-top: 2.5rem; }
   .bgg-credit img { max-width: 160px; }
 
@@ -189,6 +204,10 @@ def show_card(ds, model, session, game: int, names) -> None:
         if d.button("✓ Played", key=f"p{game}"):
             react(session, game, Reaction.PLAYED)
 
+    if session.skip_weight > 0.6:
+        st.caption("Showing you some better known games for a moment. "
+                   "Rate one and we will get back to the interesting stuff.")
+
     st.caption("Only **Like** and **Nope** shape recommendations. **Skip** "
                "moves on without judging, and skipped games can still turn up "
                "in your top 10. **Played** takes it off the list for good.")
@@ -211,12 +230,13 @@ def show_picks(ds, model, session, names, columns: int = 5) -> None:
                 "would recommend.")
         return
 
-    st.caption("One game per series, so a run of sequels cannot fill the "
-               "list. Games you skipped can appear here, since skipping meant "
-               "you did not know it. React to any of these to swap it out.")
+    st.caption("These are your top 10 recommended games! Play and rate them, "
+               "or click the ⊘ icon to remove one from your list.")
 
+    grid = st.container(key="picks-grid")
     for start in range(0, len(picks), columns):
-        for column, game in zip(st.columns(columns), picks[start:start + columns]):
+        for column, game in zip(grid.columns(columns),
+                                picks[start:start + columns]):
             row = ds.games.loc[game]
             why = policy.explain(model, swipes, int(game), ds.games, names)
             with column:
@@ -368,7 +388,8 @@ def main() -> None:
         if st.session_state.card is None:
             st.session_state.card = policy.next_card(
                 model, session.swipes(), ds, session.shown,
-                st.session_state.rng, seeds=seeds)
+                st.session_state.rng, seeds=seeds,
+                skip_weight=session.skip_weight)
         game = st.session_state.card
         if game is None:
             st.success("You have been through everything we can suggest.")

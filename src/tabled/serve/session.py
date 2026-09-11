@@ -29,6 +29,15 @@ from tabled import config
 from tabled.models.base import Swipes
 
 
+# How fast skipping pushes us back towards famous games, and how fast a real
+# opinion relaxes that. Asymmetric on purpose: one rating after a run of skips
+# says the user is engaged again, so the bias should fall away faster than it
+# built up. Both are fractions of the remaining distance, which is what keeps
+# the weight inside [0, 1) without any clamping.
+SKIP_RISE = 0.5
+SKIP_FALL = 0.75
+
+
 class Reaction(str, Enum):
     LIKE = "like"
     DISLIKE = "dislike"
@@ -113,6 +122,31 @@ class Session:
             liked=[e.game for e in taste if e.reaction is Reaction.LIKE],
             disliked=[e.game for e in taste if e.reaction is Reaction.DISLIKE],
         )
+
+    @property
+    def skip_weight(self) -> float:
+        """
+        How strongly to favour games this person will recognise, in [0, 1).
+
+        A user who does not know many games skips repeatedly, and a run of
+        skips is demoralising: nothing is happening, and they are being asked
+        about titles they have never heard of. This tracks that. Each skip
+        moves the weight halfway to 1; each real opinion knocks three quarters
+        off it. Recovery is deliberately faster than the build-up, so a single
+        engaged answer undoes a short run of shrugs.
+
+        Recomputed from the event history rather than kept as a running total.
+        That costs nothing at session lengths and means undo and session
+        import both stay correct for free, where a mutable counter would
+        quietly drift out of step with the events it claims to summarise.
+        """
+        weight = 0.0
+        for event in self.events:
+            if event.reaction is Reaction.SKIP:
+                weight += SKIP_RISE * (1.0 - weight)
+            elif event.reaction.is_taste:
+                weight -= SKIP_FALL * weight
+        return weight
 
     def counts(self) -> dict[str, int]:
         return {r.value: sum(e.reaction is r for e in self.events)

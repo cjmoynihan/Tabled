@@ -206,6 +206,26 @@ def test_the_picks_grid_pins_the_buttons_to_a_common_baseline():
             assert part in card_html
 
 
+def test_the_picks_blurb_is_written_for_the_user():
+    """It explains what to do, not how the filtering works."""
+    at = opened()
+    button(at, "👍 Like").click().run()
+    captions = [c.value for c in at.caption]
+
+    assert any("top 10 recommended games" in c for c in captions)
+    assert not any("One game per series" in c for c in captions), \
+        "developer-facing note is still on screen"
+
+
+def test_the_pick_buttons_are_centred():
+    at = opened()
+    button(at, "👍 Like").click().run()
+    css = next(b.value for b in at.markdown if "<style>" in b.value)
+
+    assert ".st-key-picks-grid .stButton button" in css
+    assert "justify-content: center" in css
+
+
 def test_attribution_links_back_to_boardgamegeek():
     """Using this data requires the credit, so it must survive a missing
     logo file rather than silently disappearing."""

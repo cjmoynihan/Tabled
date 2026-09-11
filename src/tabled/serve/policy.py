@@ -46,10 +46,28 @@ GATE_END_PCT = 50.0
 GATE_SWIPES = 15
 
 
-def popularity_gate(n_swipes: int, popularity: np.ndarray) -> float:
-    """The minimum rating count a game needs to be worth showing right now."""
+def popularity_gate(n_swipes: int, popularity: np.ndarray,
+                    skip_weight: float = 0.0) -> float:
+    """
+    The minimum rating count a game needs to be worth showing right now.
+
+    Normally this relaxes as the session goes on. `skip_weight` pulls it back
+    towards the famous end: a user who keeps skipping is being shown games
+    they do not know, and the cure is to ask about something they will
+    recognise, even though a rating of Monopoly tells the model far less than
+    a rating of something obscure.
+
+    Implemented as a shift of the existing gate rather than as a second
+    mechanism, so there is still exactly one rule deciding what is eligible.
+    """
     ratio = min(n_swipes / GATE_SWIPES, 1.0)
     percentile = GATE_START_PCT + (GATE_END_PCT - GATE_START_PCT) * ratio
+
+    # Interpolate back towards the opening percentile in proportion to how
+    # much the user has been shrugging.
+    weight = float(np.clip(skip_weight, 0.0, 1.0))
+    percentile += (GATE_START_PCT - percentile) * weight
+
     return float(np.percentile(popularity, percentile))
 
 
@@ -114,7 +132,8 @@ def next_card(model: Recommender, swipes: Swipes, ds: Dataset,
               shown: np.ndarray, rng: np.random.Generator,
               seeds: np.ndarray | None = None, top_m: int = 25,
               temperature: float = 1.0,
-              max_per_family: int = 2) -> int | None:
+              max_per_family: int = 2,
+              skip_weight: float = 0.0) -> int | None:
     """
     The single game to show next, or None when the catalogue is exhausted.
 
@@ -136,7 +155,8 @@ def next_card(model: Recommender, swipes: Swipes, ds: Dataset,
         scores[np.fromiter(already, dtype=np.int64, count=len(already))] = -np.inf
 
     popularity = ds.popularity()
-    eligible = popularity >= popularity_gate(len(shown), popularity)
+    eligible = popularity >= popularity_gate(len(shown), popularity,
+                                             skip_weight)
     # The gate is a preference, not a rule: if it would leave nothing, ignore
     # it rather than telling the user we have run out of board games.
     if np.isfinite(scores[eligible]).any():

@@ -362,6 +362,49 @@ taste identical and gives the model no way to discover it was wrong.
 literally is a sum of per-neighbour terms — and impossible from the
 factorisation, which was part of the Phase 3 recommendation.
 
+### Not knowing the games is its own failure mode
+
+A user new to the hobby skips repeatedly, and a run of skips is demoralising:
+nothing happens, and every card is a title they have never heard of. Worse,
+the app looks broken when it is in fact working exactly as designed.
+
+`Session.skip_weight` tracks this in `[0, 1)`. Each skip moves it half the
+remaining distance to 1; each like or dislike knocks three quarters off it.
+Recovery is deliberately faster than the build-up, so one engaged answer
+undoes a short run of shrugs. Both updates are fractions of the remaining
+distance, which keeps the value in range with no clamping.
+
+It feeds the popularity gate rather than adding a second mechanism, pulling
+the eligible set back towards the famous end in proportion to how much the
+user has been shrugging. Measured on the real catalogue, twelve swipes in:
+
+| skip_weight | games eligible |
+|---|---|
+| 0.00 | 6,892 |
+| 0.50 | 3,534 |
+| 0.94 | 575 |
+
+A user who skips everything is held among Monopoly, Magic, Cards Against
+Humanity and Diplomacy. The moment they rate one, the weight falls from 1.00
+to 0.25 and Xiangqi and Shogi come straight back.
+
+**Why popularity rather than collaborative signal.** The tempting alternative
+is to find games rated by people who rated what this user rated. But that
+estimates *P(they would like it)*, which is what the recommender already
+optimises — using it here would collapse the distinction the mechanic exists
+to make. What we actually want is *P(they have an opinion at all)*, which is
+mostly *P(they have heard of it)*, and raw popularity is the direct proxy for
+that. The second method would also quietly bias towards games the user likes,
+turning a familiarity problem into a taste one.
+
+The cost is real and worth stating: a rating of Monopoly carries far less
+information than a rating of something obscure. This deliberately trades
+information per answer for getting an answer at all.
+
+`skip_weight` is recomputed from the event history rather than accumulated,
+so undo and session import stay correct for free. A running counter would
+drift out of step with the events it claims to summarise.
+
 ### The bug this phase caught
 
 The popularity gate was first written as an absolute floor: 20,000 ratings at

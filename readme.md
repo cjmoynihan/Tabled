@@ -168,6 +168,13 @@ A skip usually means unfamiliarity or indifference, not distaste, so folding
 it into "dislike" would poison the signal. It is the one reaction that leaves
 the card stream without removing the game from the results.
 
+Skipping repeatedly is also a signal in itself. `skip_weight` rises with each
+skip and falls sharply on any real opinion, and it pulls the catalogue back
+towards games you will actually recognise. Skip everything and you end up
+among Monopoly and Cards Against Humanity; rate one and Xiangqi comes straight
+back. Rating a famous game tells the model less, which is the deliberate
+trade: a shrug tells it nothing at all.
+
 Each card says why it was chosen (*Because you liked Go*), which turns a
 recommendation into a claim the user can disagree with and makes a bad
 neighbour list visible rather than merely felt.
