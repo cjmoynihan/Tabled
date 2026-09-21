@@ -34,18 +34,16 @@ tabled fit         # fit and cache a recommender
 tabled evaluate    # score models against held-out users
 ```
 
-`profile` is worth running first — it prints a retention table showing how many
-games and interactions survive each candidate filter, which is how `prepare`'s
-thresholds were chosen:
+Run `profile` to see model construction details. These are used for tabled prepare:
 
 ```bash
 tabled prepare --min-game 50 --min-user 10
 ```
 
-Support counts are cached after the first run, so trying different thresholds
-does not re-read the 400 MB file. `--rescan` forces a fresh pass.
+Support counts are cached after the first run, so using different thresholds
+does not re-read the 400 MB file. Use `--rescan` forces a fresh pass.
 
-## What `prepare` produces
+## What `prepare` does
 
 Four artifacts in `data/processed/`:
 
@@ -57,8 +55,8 @@ Four artifacts in `data/processed/`:
 | `manifest.json` | thresholds, shapes, density, what was dropped |
 
 At the default thresholds that is **223,798 users × 17,140 games** with
-**18.2M ratings** — 95.8% of the export, at 0.47% density. The build takes
-about 40 seconds and peaks around 1.1 GB of memory.
+**18.2M ratings**, using 95.8% of the export at 0.47% density. Expect the build to take
+about 40 seconds and around 1.1 GB of memory.
 
 ```python
 from tabled.data import prepare
@@ -73,13 +71,13 @@ centred, means = prepare.mean_center(ds.matrix)
 
 Ratings are stored on the original 1-10 scale rather than pre-binarised. The
 swipe UI collects thumbs up/down, but collapsing the scale during `prepare`
-would freeze a modelling choice into the data; `to_implicit(threshold=)` does
+would modify the ground truth's data; `to_implicit(threshold=)` does
 it at model time instead, where it can be tuned.
 
 ## Recommending
 
-Two models, both cached as artifacts because fitting is far too slow to happen
-per request:
+Two models, both cached because fitting is far too slow to happen
+each request:
 
 ```bash
 tabled fit --model item-item --holdout   # ~2 min, writes item_item.npz (14 MB)
@@ -105,9 +103,7 @@ for game in model.recommend(swipes, n=10):
 ```
 
 **Item-item** ranks by similarity to what you reacted to, with similarities
-shrunk by co-rater count so a pair sharing four raters cannot outrank a pair
-sharing four thousand. Only the top 100 neighbours per game are kept — the
-full matrix is 1.2 GB and ~89% dense, so sparsity saves nothing.
+shrunk by co-rater count so sparse pairs (eg: pair sharing four raters) cannot outrank a well-defined pair (eg: four thousand). Only the top 100 neighbours per game are kept.
 
 **ALS** factorises binarised likes and folds a new user in with a single
 least-squares solve against fixed item factors. Unusually for an
